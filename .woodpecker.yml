@@ -1,0 +1,16 @@
+when:
+  - branch: [main]
+    event: push
+
+steps:
+  26-slim-build-push:
+    image: reg.hentioe.dev/library/plugin-docker-buildx
+    privileged: true
+    pull: true
+    settings:
+      repo: hentioe/fake-backend
+      username:
+        from_secret: docker_username
+      password:
+        from_secret: docker_password
+      platforms: linux/amd64,linux/arm64/v8

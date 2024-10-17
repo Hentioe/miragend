@@ -1,0 +1,14 @@
+[package]
+name = "fake_backend"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = "1.0.89"
+axum = "0.7.7"
+env_logger = "0.11.5"
+html5ever = "0.27"
+log = "0.4.22"
+reqwest = "0.12.8"
+scraper = "0.20.0"
+tokio = {version = "1.40.0", features = ["rt-multi-thread"]}
