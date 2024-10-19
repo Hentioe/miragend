@@ -7,8 +7,9 @@ edition = "2021"
 anyhow = "1.0.89"
 axum = "0.7.7"
 env_logger = "0.11.5"
-html5ever = "0.27"
+html5ever = "0.29.0"
+markup5ever = "0.14.0"
+markup5ever_rcdom = "0.5.0-unofficial"
 log = "0.4.22"
 reqwest = "0.12.8"
-scraper = "0.20.0"
-tokio = {version = "1.40.0", features = ["rt-multi-thread"]}
+tokio = { version = "1.40.0", features = ["rt-multi-thread"] }
