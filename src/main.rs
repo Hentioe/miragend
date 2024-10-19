@@ -4,10 +4,21 @@ use html5ever::tendril::TendrilSink;
 use html5ever::{parse_document, parse_fragment, serialize, QualName};
 use log::info;
 use markup5ever::{local_name, namespace_url, ns};
-use markup5ever_rcdom::{Handle, Node, RcDom, SerializableHandle};
+use markup5ever_rcdom::{
+    Handle, Node,
+    NodeData::{Element, Text},
+    RcDom, SerializableHandle,
+};
+use std::path::Path;
 use std::rc::Rc;
+use std::sync::LazyLock;
 
 const BIND: &str = "0.0.0.0:8080";
+
+// 从文件中读取
+const FALLBACK_PATCH_MARKDOWN: &str = include_str!("../patch-content.md");
+static PATCH_CONTENT_FILE: LazyLock<String> =
+    LazyLock::new(|| std::env::var("FAKE_BACKEND_PATCH_CONTENT_FILE").unwrap_or_default());
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -28,14 +39,22 @@ async fn main() -> anyhow::Result<()> {
 }
 
 async fn handler(request: Request<Body>) -> Html<String> {
-    let uri = request.uri().to_string();
-    match patch_page(&format!("https://blog.hentioe.dev{}", uri)).await {
+    let url = &format!("https://blog.hentioe.dev{}", request.uri());
+    let remove_nodes = vec!["TableOfContents".to_owned()];
+    let patch_markdown = load_patch_content();
+    let patch_html = comrak::markdown_to_html(&patch_markdown, &comrak::ComrakOptions::default());
+
+    match patch_page(url, patch_html, remove_nodes).await {
         Ok(html) => Html(html),
         Err(e) => Html(format!("Error: {}", e)),
     }
 }
 
-async fn patch_page(url: &str) -> anyhow::Result<String> {
+async fn patch_page(
+    url: &str,
+    patch_content: String,
+    remove_nodes: Vec<String>,
+) -> anyhow::Result<String> {
     let body = reqwest::get(url)
         .await
         .context(format!("failed to fetch url: {}", url))?
@@ -54,12 +73,16 @@ async fn patch_page(url: &str) -> anyhow::Result<String> {
         QualName::new(None, ns!(html), local_name!("body")),
         vec![],
     )
-    .one("Fuck you, Kimi");
+    .one(patch_content);
 
-    let child = find_first_element(&fragment_dom.document);
-
-    replace_children(dom.document.clone(), "post-content", vec![child]);
-    remove_children(dom.document.clone(), "TableOfContents");
+    replace_children(
+        dom.document.clone(),
+        "post-content",
+        vec![find_first_element(&fragment_dom.document)],
+    );
+    for rm_node in remove_nodes {
+        remove_children(dom.document.clone(), &rm_node);
+    }
 
     let mut buf = Vec::new();
     let document: SerializableHandle = dom.document.clone().into();
@@ -74,7 +97,7 @@ fn replace_children(handle: Handle, target_id: &str, new_children: Vec<Rc<Node>>
     let children = node.children.borrow();
     for child in children.iter() {
         match &child.data {
-            markup5ever_rcdom::NodeData::Element { ref attrs, .. } => {
+            Element { ref attrs, .. } => {
                 // 查找 id 属性
                 let id = attrs.borrow().iter().find_map(|attr| {
                     if attr.name.local == local_name!("id") {
@@ -105,17 +128,26 @@ fn find_first_element(handle: &Handle) -> Rc<Node> {
     let children = node.children.borrow();
     if let Some(child) = children.iter().next() {
         match &child.data {
-            markup5ever_rcdom::NodeData::Element { ref name, .. } => {
+            Element { ref name, .. } => {
                 if name.local.as_ref() != "html" && name.local.as_ref() != "body" {
                     child.clone()
                 } else {
                     find_first_element(child)
                 }
             }
-            markup5ever_rcdom::NodeData::Text { .. } => child.clone(),
+            Text { .. } => child.clone(),
             _ => find_first_element(child),
         }
     } else {
         panic!("No element found");
+    }
+}
+
+fn load_patch_content() -> String {
+    if !PATCH_CONTENT_FILE.is_empty() {
+        std::fs::read_to_string(Path::new(&*PATCH_CONTENT_FILE))
+            .unwrap_or_else(|_| FALLBACK_PATCH_MARKDOWN.to_string())
+    } else {
+        FALLBACK_PATCH_MARKDOWN.to_string()
     }
 }
