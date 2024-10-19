@@ -3,7 +3,7 @@ when:
     event: push
 
 steps:
-  26-slim-build-push:
+  build-push:
     image: reg.hentioe.dev/library/plugin-docker-buildx
     privileged: true
     pull: true
