@@ -2,13 +2,10 @@ use anyhow::Context;
 use axum::{body::Body, http::Request, response::Html, routing::get, Router};
 use html5ever::tendril::TendrilSink;
 use html5ever::{parse_document, parse_fragment, serialize, QualName};
-use log::info;
+use log::{error, info};
 use markup5ever::{local_name, namespace_url, ns};
-use markup5ever_rcdom::{
-    Handle, Node,
-    NodeData::{Element, Text},
-    RcDom, SerializableHandle,
-};
+use markup5ever_rcdom::{Handle, Node, NodeData::Element, RcDom, SerializableHandle};
+use std::cell::RefCell;
 use std::path::Path;
 use std::rc::Rc;
 use std::sync::LazyLock;
@@ -78,7 +75,7 @@ async fn patch_page(
     replace_children(
         dom.document.clone(),
         "post-content",
-        vec![find_first_element(&fragment_dom.document)],
+        find_elements(&fragment_dom.document),
     );
     for rm_node in remove_nodes {
         remove_children(dom.document.clone(), &rm_node);
@@ -123,23 +120,29 @@ fn remove_children(handle: Handle, target_id: &str) {
     replace_children(handle, target_id, vec![])
 }
 
-fn find_first_element(handle: &Handle) -> Rc<Node> {
-    let node = handle;
+fn find_elements(handle: &Handle) -> Vec<Rc<Node>> {
+    let node: &Rc<Node> = handle;
     let children = node.children.borrow();
     if let Some(child) = children.iter().next() {
         match &child.data {
             Element { ref name, .. } => {
-                if name.local.as_ref() != "html" && name.local.as_ref() != "body" {
-                    child.clone()
+                if name.local.as_ref() == "html" {
+                    // 将 child.children 转换为 Vec<Rc<Node>>
+                    child.children.borrow().iter().cloned().collect()
                 } else {
-                    find_first_element(child)
+                    find_elements(child)
                 }
             }
-            Text { .. } => child.clone(),
-            _ => find_first_element(child),
+            _ => find_elements(child),
         }
     } else {
-        panic!("No element found");
+        // 这应该是一个 bug，请将您的补丁内容返回到 GitHub issue 中。
+        // 解析补丁内容 HTML 时没有找到有效元素
+        error!("no valid elements found when parsing patch content HTML");
+
+        vec![Node::new(markup5ever_rcdom::NodeData::Text {
+            contents: RefCell::new("".into()),
+        })]
     }
 }
 
