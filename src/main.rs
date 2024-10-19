@@ -5,8 +5,6 @@ use log::info;
 use scraper::{Html as ScraperHtml, Selector};
 
 const BIND: &str = "0.0.0.0:8080";
-// const FALLBACK_PAGE: &str =
-//     "https://blog.hentioe.dev/posts/jujue-shiyong-moonshot-piaoqie-chanpin-kimi.html";
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -35,24 +33,6 @@ async fn handler(request: Request<Body>) -> Html<String> {
 }
 
 async fn patch_page(url: &str) -> anyhow::Result<String> {
-    let markdown_selector = Selector::parse(".markdown-body")
-        .map_err(|e| anyhow!("failed to parse markdown selector: {}", e))?;
-    // let fallback_html = {
-    //     let body = reqwest::get(FALLBACK_PAGE)
-    //         .await
-    //         .context(format!("failed to fetch url: {}", FALLBACK_PAGE))?
-    //         .text()
-    //         .await
-    //         .context("failed to read response body")?;
-
-    //     let fallback = ScraperHtml::parse_document(&body);
-    //     fallback
-    //         .select(&markdown_selector)
-    //         .next()
-    //         .ok_or(anyhow!("markdown node not found"))?
-    //         .inner_html()
-    // };
-
     let body = reqwest::get(url)
         .await
         .context(format!("failed to fetch url: {}", url))?
@@ -61,12 +41,23 @@ async fn patch_page(url: &str) -> anyhow::Result<String> {
         .context("failed to read response body")?;
 
     let mut document = ScraperHtml::parse_document(&body);
-    let content = document
+    let markdown_selector = Selector::parse(".markdown-body")
+        .map_err(|e| anyhow!("failed to parse markdown selector: {}", e))?;
+    let markdown_body = document
         .select(&markdown_selector)
         .next()
         .ok_or(anyhow!("markdown node not found"))?;
 
-    document.remove_from_parent(&content.id());
+    let toc_content_selector = Selector::parse("#TableOfContents")
+        .map_err(|e| anyhow!("failed to parse toc selector: {}", e))?;
+    let toc_content = document
+        .select(&toc_content_selector)
+        .next()
+        .ok_or(anyhow!("toc contents not found"))?;
+    let markdown_body_handle = markdown_body.id();
+    let toc_content_handle = toc_content.id();
+    document.remove_from_parent(&markdown_body_handle);
+    document.remove_from_parent(&toc_content_handle);
 
     Ok(document.html())
 }
