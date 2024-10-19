@@ -12,10 +12,25 @@ use std::sync::LazyLock;
 
 const BIND: &str = "0.0.0.0:8080";
 
-// 从文件中读取
-const FALLBACK_PATCH_MARKDOWN: &str = include_str!("../patch-content.md");
+static UPSTREAM_BASE_URL: LazyLock<String> = LazyLock::new(|| {
+    std::env::var("FAKE_BACKEND_UPSTREAM_BASE_URL")
+        .expect("missing `FAKE_BACKEND_UPSTREAM_BASE_URL` env var")
+});
+static STRATEGY: LazyLock<String> =
+    LazyLock::new(|| std::env::var("FAKE_BACKEND_STRATEGY").unwrap_or("obfuscation".to_owned()));
 static PATCH_CONTENT_FILE: LazyLock<String> =
     LazyLock::new(|| std::env::var("FAKE_BACKEND_PATCH_CONTENT_FILE").unwrap_or_default());
+
+// 从文件中读取后备补丁内容
+const FALLBACK_PATCH_MARKDOWN: &str = include_str!("../patch-content.md");
+
+// 策略
+enum Strategy {
+    // 补丁
+    Patch(String, Vec<String>),
+    // 混淆
+    Obfuscation,
+}
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -36,22 +51,28 @@ async fn main() -> anyhow::Result<()> {
 }
 
 async fn handler(request: Request<Body>) -> Html<String> {
-    let url = &format!("https://blog.hentioe.dev{}", request.uri());
+    let url = &format!("{}{}", *UPSTREAM_BASE_URL, request.uri());
     let remove_nodes = vec!["TableOfContents".to_owned()];
     let patch_markdown = load_patch_content();
     let patch_html = comrak::markdown_to_html(&patch_markdown, &comrak::ComrakOptions::default());
 
-    match patch_page(url, patch_html, remove_nodes).await {
+    let strategy = match (STRATEGY).as_str() {
+        "patch" => Strategy::Patch(patch_html, remove_nodes),
+        "obfuscation" => Strategy::Obfuscation,
+        s => {
+            // 无效的策略，回到后备策略
+            error!("invalid strategy: `{}`, fallback strategy", s);
+            Strategy::Obfuscation
+        }
+    };
+
+    match patch_page(url, strategy).await {
         Ok(html) => Html(html),
         Err(e) => Html(format!("Error: {}", e)),
     }
 }
 
-async fn patch_page(
-    url: &str,
-    patch_content: String,
-    remove_nodes: Vec<String>,
-) -> anyhow::Result<String> {
+async fn patch_page(url: &str, strategy: Strategy) -> anyhow::Result<String> {
     let body = reqwest::get(url)
         .await
         .context(format!("failed to fetch url: {}", url))?
@@ -64,21 +85,28 @@ async fn patch_page(
         .read_from(&mut body.as_bytes())
         .context("failed to parse document")?;
 
-    let fragment_dom = parse_fragment(
-        RcDom::default(),
-        Default::default(),
-        QualName::new(None, ns!(html), local_name!("body")),
-        vec![],
-    )
-    .one(patch_content);
+    match strategy {
+        Strategy::Patch(patch_content, remove_nodes) => {
+            let fragment_dom = parse_fragment(
+                RcDom::default(),
+                Default::default(),
+                QualName::new(None, ns!(html), local_name!("body")),
+                vec![],
+            )
+            .one(patch_content);
 
-    replace_children(
-        dom.document.clone(),
-        "post-content",
-        find_elements(&fragment_dom.document),
-    );
-    for rm_node in remove_nodes {
-        remove_children(dom.document.clone(), &rm_node);
+            replace_children(
+                dom.document.clone(),
+                "post-content",
+                find_elements(&fragment_dom.document),
+            );
+            for node in remove_nodes {
+                remove_children(dom.document.clone(), &node);
+            }
+        }
+        Strategy::Obfuscation => {
+            obfuscate_text(dom.document.clone());
+        }
     }
 
     let mut buf = Vec::new();
@@ -118,6 +146,27 @@ fn replace_children(handle: Handle, target_id: &str, new_children: Vec<Rc<Node>>
 }
 fn remove_children(handle: Handle, target_id: &str) {
     replace_children(handle, target_id, vec![])
+}
+
+fn obfuscate_text(handle: Handle) {
+    let node = handle;
+    let children = node.children.borrow();
+    for child in children.iter() {
+        match child.data {
+            markup5ever_rcdom::NodeData::Text { ref contents } => {
+                contents.replace_with(|text| {
+                    text.chars()
+                        .map(|_c| {
+                            // 一个随机的生僻汉字
+                            rand::random::<u32>() % (0x9fa5 - 0x4e00) + 0x4e00
+                        })
+                        .map(|c| std::char::from_u32(c).unwrap())
+                        .collect()
+                });
+            }
+            _ => obfuscate_text(child.clone()),
+        }
+    }
 }
 
 fn find_elements(handle: &Handle) -> Vec<Rc<Node>> {

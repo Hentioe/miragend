@@ -499,6 +499,7 @@ dependencies = [
  "log",
  "markup5ever",
  "markup5ever_rcdom",
+ "rand",
  "reqwest",
  "tokio",
 ]
