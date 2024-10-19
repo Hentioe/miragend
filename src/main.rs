@@ -53,11 +53,14 @@ async fn main() -> anyhow::Result<()> {
 async fn handler(request: Request<Body>) -> Html<String> {
     let url = &format!("{}{}", *UPSTREAM_BASE_URL, request.uri());
     let remove_nodes = vec!["TableOfContents".to_owned()];
-    let patch_markdown = load_patch_content();
-    let patch_html = comrak::markdown_to_html(&patch_markdown, &comrak::ComrakOptions::default());
 
     let strategy = match (STRATEGY).as_str() {
-        "patch" => Strategy::Patch(patch_html, remove_nodes),
+        "patch" => {
+            let patch_markdown = load_patch_content();
+            let patch_html =
+                comrak::markdown_to_html(&patch_markdown, &comrak::ComrakOptions::default());
+            Strategy::Patch(patch_html, remove_nodes)
+        }
         "obfuscation" => Strategy::Obfuscation,
         s => {
             // 无效的策略，回到后备策略
@@ -85,7 +88,7 @@ async fn patch_page(url: &str, strategy: Strategy) -> anyhow::Result<String> {
         .read_from(&mut body.as_bytes())
         .context("failed to parse document")?;
 
-    match strategy {
+    let _extending_lifecycle = match strategy {
         Strategy::Patch(patch_content, remove_nodes) => {
             let fragment_dom = parse_fragment(
                 RcDom::default(),
@@ -93,7 +96,7 @@ async fn patch_page(url: &str, strategy: Strategy) -> anyhow::Result<String> {
                 QualName::new(None, ns!(html), local_name!("body")),
                 vec![],
             )
-            .one(patch_content);
+            .one(patch_content.clone());
 
             replace_children(
                 dom.document.clone(),
@@ -103,11 +106,15 @@ async fn patch_page(url: &str, strategy: Strategy) -> anyhow::Result<String> {
             for node in remove_nodes {
                 remove_children(dom.document.clone(), &node);
             }
+
+            Some(fragment_dom)
         }
         Strategy::Obfuscation => {
             obfuscate_text(dom.document.clone());
+
+            None
         }
-    }
+    };
 
     let mut buf = Vec::new();
     let document: SerializableHandle = dom.document.clone().into();
