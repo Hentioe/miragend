@@ -9,10 +9,13 @@ use std::cell::RefCell;
 use std::path::Path;
 use std::rc::Rc;
 
+mod obfuscater;
 mod vars;
 
-// 从文件中读取后备补丁内容
+// 后备补丁内容
 const FALLBACK_PATCH_MARKDOWN: &str = include_str!("../patch-content.md");
+// 忽略混淆文本的标签
+const IGNORE_OBFUSCATE_TAGS: [&str; 5] = ["script", "noscript", "style", "template", "iframe"];
 // 策略
 enum Strategy {
     // 补丁
@@ -159,16 +162,15 @@ fn obfuscate_text(handle: Handle) {
     let children = node.children.borrow();
     for child in children.iter() {
         match child.data {
+            Element { ref name, .. } => {
+                if IGNORE_OBFUSCATE_TAGS.contains(&name.local.as_ref()) {
+                    continue;
+                } else {
+                    obfuscate_text(child.clone());
+                }
+            }
             markup5ever_rcdom::NodeData::Text { ref contents } => {
-                contents.replace_with(|text| {
-                    text.chars()
-                        .map(|_c| {
-                            // 一个随机的生僻汉字
-                            rand::random::<u32>() % (0x9fa5 - 0x4e00) + 0x4e00
-                        })
-                        .map(|c| std::char::from_u32(c).unwrap())
-                        .collect()
-                });
+                contents.replace_with(obfuscater::obfuscate_text);
             }
             _ => obfuscate_text(child.clone()),
         }
