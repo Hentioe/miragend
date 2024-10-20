@@ -20,6 +20,13 @@ static STRATEGY: LazyLock<String> =
     LazyLock::new(|| std::env::var("FAKE_BACKEND_STRATEGY").unwrap_or("obfuscation".to_owned()));
 static PATCH_CONTENT_FILE: LazyLock<String> =
     LazyLock::new(|| std::env::var("FAKE_BACKEND_PATCH_CONTENT_FILE").unwrap_or_default());
+static REMOVE_NODES: LazyLock<Vec<String>> = LazyLock::new(|| {
+    std::env::var("FAKE_BACKEND_REMOVE_NODES")
+        .unwrap_or_default()
+        .split(',')
+        .map(|s| s.to_owned())
+        .collect()
+});
 
 // 从文件中读取后备补丁内容
 const FALLBACK_PATCH_MARKDOWN: &str = include_str!("../patch-content.md");
@@ -52,14 +59,12 @@ async fn main() -> anyhow::Result<()> {
 
 async fn handler(request: Request<Body>) -> Html<String> {
     let url = &format!("{}{}", *UPSTREAM_BASE_URL, request.uri());
-    let remove_nodes = vec!["TableOfContents".to_owned()];
-
     let strategy = match (STRATEGY).as_str() {
         "patch" => {
             let patch_markdown = load_patch_content();
             let patch_html =
                 comrak::markdown_to_html(&patch_markdown, &comrak::ComrakOptions::default());
-            Strategy::Patch(patch_html, remove_nodes)
+            Strategy::Patch(patch_html, REMOVE_NODES.clone())
         }
         "obfuscation" => Strategy::Obfuscation,
         s => {
