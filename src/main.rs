@@ -8,35 +8,23 @@ use markup5ever_rcdom::{Handle, Node, NodeData::Element, RcDom, SerializableHand
 use std::cell::RefCell;
 use std::path::Path;
 use std::rc::Rc;
-use std::sync::LazyLock;
 
-const BIND: &str = "0.0.0.0:8080";
-
-static UPSTREAM_BASE_URL: LazyLock<String> = LazyLock::new(|| {
-    std::env::var("FAKE_BACKEND_UPSTREAM_BASE_URL")
-        .expect("missing `FAKE_BACKEND_UPSTREAM_BASE_URL` env var")
-});
-static STRATEGY: LazyLock<String> =
-    LazyLock::new(|| std::env::var("FAKE_BACKEND_STRATEGY").unwrap_or("obfuscation".to_owned()));
-static PATCH_CONTENT_FILE: LazyLock<String> =
-    LazyLock::new(|| std::env::var("FAKE_BACKEND_PATCH_CONTENT_FILE").unwrap_or_default());
-static REMOVE_NODES: LazyLock<Vec<String>> = LazyLock::new(|| {
-    std::env::var("FAKE_BACKEND_REMOVE_NODES")
-        .unwrap_or_default()
-        .split(',')
-        .map(|s| s.to_owned())
-        .collect()
-});
+mod vars;
 
 // 从文件中读取后备补丁内容
 const FALLBACK_PATCH_MARKDOWN: &str = include_str!("../patch-content.md");
-
 // 策略
 enum Strategy {
     // 补丁
-    Patch(String, Vec<String>),
+    Patch(PatchConfig),
     // 混淆
     Obfuscation,
+}
+
+struct PatchConfig {
+    target: String,
+    content: String,
+    remove_nodes: Vec<String>,
 }
 
 #[tokio::main]
@@ -44,11 +32,12 @@ async fn main() -> anyhow::Result<()> {
     env_logger::init();
 
     let app = Router::new().route("/*path", get(handler));
-    let listener = tokio::net::TcpListener::bind(BIND)
+    let bind = vars::bind();
+    let listener = tokio::net::TcpListener::bind(bind)
         .await
         .context("failed to bind to address")?;
 
-    info!("listening on: http://{}", BIND);
+    info!("listening on: http://{}", bind);
 
     axum::serve(listener, app)
         .await
@@ -58,13 +47,18 @@ async fn main() -> anyhow::Result<()> {
 }
 
 async fn handler(request: Request<Body>) -> Html<String> {
-    let url = &format!("{}{}", *UPSTREAM_BASE_URL, request.uri());
-    let strategy = match (STRATEGY).as_str() {
+    let url = &format!("{}{}", vars::upstream_base_url(), request.uri());
+    let strategy = match vars::strategy() {
         "patch" => {
             let patch_markdown = load_patch_content();
             let patch_html =
                 comrak::markdown_to_html(&patch_markdown, &comrak::ComrakOptions::default());
-            Strategy::Patch(patch_html, REMOVE_NODES.clone())
+            let config = PatchConfig {
+                target: vars::patch_target().to_owned(),
+                content: patch_html,
+                remove_nodes: vars::remove_nodes().clone(),
+            };
+            Strategy::Patch(config)
         }
         "obfuscation" => Strategy::Obfuscation,
         s => {
@@ -94,21 +88,21 @@ async fn patch_page(url: &str, strategy: Strategy) -> anyhow::Result<String> {
         .context("failed to parse document")?;
 
     let _extending_lifecycle = match strategy {
-        Strategy::Patch(patch_content, remove_nodes) => {
+        Strategy::Patch(config) => {
             let fragment_dom = parse_fragment(
                 RcDom::default(),
                 Default::default(),
                 QualName::new(None, ns!(html), local_name!("body")),
                 vec![],
             )
-            .one(patch_content.clone());
+            .one(config.content);
 
             replace_children(
                 dom.document.clone(),
-                "post-content",
+                &config.target,
                 find_elements(&fragment_dom.document),
             );
-            for node in remove_nodes {
+            for node in config.remove_nodes {
                 remove_children(dom.document.clone(), &node);
             }
 
@@ -208,8 +202,8 @@ fn find_elements(handle: &Handle) -> Vec<Rc<Node>> {
 }
 
 fn load_patch_content() -> String {
-    if !PATCH_CONTENT_FILE.is_empty() {
-        std::fs::read_to_string(Path::new(&*PATCH_CONTENT_FILE))
+    if !vars::patch_content_file().is_empty() {
+        std::fs::read_to_string(Path::new(vars::patch_content_file()))
             .unwrap_or_else(|_| FALLBACK_PATCH_MARKDOWN.to_string())
     } else {
         FALLBACK_PATCH_MARKDOWN.to_string()
