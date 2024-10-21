@@ -16,6 +16,8 @@ mod vars;
 const FALLBACK_PATCH_MARKDOWN: &str = include_str!("../patch-content.md");
 // 忽略混淆文本的标签
 const IGNORE_OBFUSCATE_TAGS: [&str; 5] = ["script", "noscript", "style", "template", "iframe"];
+// 混淆内容的元标签列表（name 或 property）
+const OBFUSCATED_META_TAGS: [&str; 4] = ["description", "keywords", "og:title", "og:description"];
 // 策略
 enum Strategy {
     // 补丁
@@ -112,7 +114,7 @@ async fn patch_page(url: &str, strategy: Strategy) -> anyhow::Result<String> {
             Some(fragment_dom)
         }
         Strategy::Obfuscation => {
-            obfuscate_text(dom.document.clone());
+            obfuscate_content(dom.document.clone());
 
             None
         }
@@ -157,22 +159,66 @@ fn remove_children(handle: Handle, target_id: &str) {
     replace_children(handle, target_id, vec![])
 }
 
-fn obfuscate_text(handle: Handle) {
+fn obfuscate_content(handle: Handle) {
     let node = handle;
     let children = node.children.borrow();
     for child in children.iter() {
         match child.data {
-            Element { ref name, .. } => {
-                if IGNORE_OBFUSCATE_TAGS.contains(&name.local.as_ref()) {
+            Element {
+                ref name,
+                ref attrs,
+                ..
+            } => {
+                let tag_name = name.local.as_ref();
+                if IGNORE_OBFUSCATE_TAGS.contains(&tag_name) {
+                    continue;
+                } else if tag_name == "meta" {
+                    // 混淆元标签的 content 属性：
+                    // - 如果元标签的 name 是 OBFUSCATED_META_TAGS 之一，则混淆 content 属性
+                    // - 如果元标签的 property 是 OBFUSCATED_META_TAGS 之一，则混淆 content 属性
+                    let finded_meta_name = attrs
+                        .borrow()
+                        .iter()
+                        .find(|attr| attr.name.local == local_name!("name"))
+                        .map(|attr| attr.value.clone());
+                    let finded_meta_property = attrs
+                        .borrow()
+                        .iter()
+                        .find(|attr| attr.name.local == local_name!("property"))
+                        .map(|attr| attr.value.clone());
+                    let update_content = |name_or_property: &str| {
+                        if OBFUSCATED_META_TAGS.contains(&name_or_property) {
+                            let meta_content = attrs
+                                .borrow()
+                                .iter()
+                                .find(|attr| attr.name.local == local_name!("content"))
+                                .map(|attr| attr.value.clone());
+                            if let Some(mut content) = meta_content {
+                                attrs.borrow_mut().iter_mut().for_each(|attr| {
+                                    if attr.name.local == local_name!("content") {
+                                        attr.value = obfuscater::obfuscate_text(&mut content);
+                                    }
+                                });
+                            }
+                        }
+                    };
+                    if let Some(meta_name) = finded_meta_name {
+                        update_content(&meta_name);
+                    }
+
+                    if let Some(meta_name) = finded_meta_property {
+                        update_content(&meta_name);
+                    }
+
                     continue;
                 } else {
-                    obfuscate_text(child.clone());
+                    obfuscate_content(child.clone());
                 }
             }
             markup5ever_rcdom::NodeData::Text { ref contents } => {
                 contents.replace_with(obfuscater::obfuscate_text);
             }
-            _ => obfuscate_text(child.clone()),
+            _ => obfuscate_content(child.clone()),
         }
     }
 }
