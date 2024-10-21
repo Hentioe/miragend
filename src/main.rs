@@ -9,7 +9,7 @@ use std::cell::RefCell;
 use std::path::Path;
 use std::rc::Rc;
 
-mod obfuscater;
+mod obfuscation;
 mod vars;
 
 // 后备补丁内容
@@ -193,7 +193,7 @@ fn obfuscate_content(handle: Handle) {
                             if let Some(mut content) = find_attr(local_name!("content")) {
                                 attrs.borrow_mut().iter_mut().for_each(|attr| {
                                     if attr.name.local == local_name!("content") {
-                                        attr.value = obfuscater::obfuscate_text(&mut content);
+                                        attr.value = obfuscation::obfuscate_text(&mut content);
                                     }
                                 });
                             }
@@ -213,7 +213,7 @@ fn obfuscate_content(handle: Handle) {
                 }
             }
             markup5ever_rcdom::NodeData::Text { ref contents } => {
-                contents.replace_with(obfuscater::obfuscate_text);
+                contents.replace_with(obfuscation::obfuscate_text);
             }
             _ => obfuscate_content(child.clone()),
         }
