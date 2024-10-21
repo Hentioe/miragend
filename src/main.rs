@@ -17,17 +17,17 @@ const FALLBACK_PATCH_MARKDOWN: &str = include_str!("../patch-content.md");
 // 忽略混淆文本的标签
 const IGNORE_OBFUSCATION_TAGS: [&str; 5] = ["script", "noscript", "style", "template", "iframe"];
 // 策略
-enum Strategy {
+enum Strategy<'a> {
     // 补丁
-    Patch(PatchConfig),
+    Patch(PatchConfig<'a>),
     // 混淆
     Obfuscation,
 }
 
-struct PatchConfig {
+struct PatchConfig<'a> {
     target: String,
     content: String,
-    remove_nodes: Vec<String>,
+    remove_nodes: &'a Vec<&'a str>,
 }
 
 #[tokio::main]
@@ -59,7 +59,7 @@ async fn handler(request: Request<Body>) -> Html<String> {
             let config = PatchConfig {
                 target: vars::patch_target().to_owned(),
                 content: patch_html,
-                remove_nodes: vars::remove_nodes().clone(),
+                remove_nodes: vars::patch_remove_nodes(),
             };
             Strategy::Patch(config)
         }
@@ -71,13 +71,13 @@ async fn handler(request: Request<Body>) -> Html<String> {
         }
     };
 
-    match patch_page(url, strategy).await {
+    match patch_page(url, &strategy).await {
         Ok(html) => Html(html),
         Err(e) => Html(format!("Error: {}", e)),
     }
 }
 
-async fn patch_page(url: &str, strategy: Strategy) -> anyhow::Result<String> {
+async fn patch_page<'a>(url: &str, strategy: &'a Strategy<'_>) -> anyhow::Result<String> {
     let body = reqwest::get(url)
         .await
         .context(format!("failed to fetch url: {}", url))?
@@ -98,7 +98,7 @@ async fn patch_page(url: &str, strategy: Strategy) -> anyhow::Result<String> {
                 QualName::new(None, ns!(html), local_name!("body")),
                 vec![],
             )
-            .one(config.content);
+            .one(config.content.clone());
 
             replace_children(
                 dom.document.clone(),
@@ -106,7 +106,7 @@ async fn patch_page(url: &str, strategy: Strategy) -> anyhow::Result<String> {
                 find_elements(&fragment_dom.document),
             );
             for node in config.remove_nodes {
-                remove_children(dom.document.clone(), &node);
+                remove_children(dom.document.clone(), node);
             }
 
             Some(fragment_dom)

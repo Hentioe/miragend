@@ -12,11 +12,11 @@ static PATCH_TARGET: LazyLock<String> =
     LazyLock::new(|| std::env::var("FAKE_BACKEND_PATCH_TARGET").unwrap_or_default());
 static PATCH_CONTENT_FILE: LazyLock<String> =
     LazyLock::new(|| std::env::var("FAKE_BACKEND_PATCH_CONTENT_FILE").unwrap_or_default());
-static REMOVE_NODES: LazyLock<Vec<String>> = LazyLock::new(|| {
-    std::env::var("FAKE_BACKEND_REMOVE_NODES")
+static PATCH_REMOVE_NODES: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
+    std::env::var("FAKE_BACKEND_PATCH_REMOVE_NODES")
         .unwrap_or_default()
         .split(',')
-        .map(|s| s.to_owned())
+        .map(|s| Box::leak(s.to_owned().into_boxed_str()) as &'static str)
         .collect()
 });
 
@@ -54,8 +54,8 @@ pub fn patch_content_file() -> &'static str {
     &PATCH_CONTENT_FILE
 }
 
-pub fn remove_nodes() -> &'static Vec<String> {
-    &REMOVE_NODES
+pub fn patch_remove_nodes() -> &'static Vec<&'static str> {
+    &PATCH_REMOVE_NODES
 }
 
 pub fn obfuscation_meta_tags() -> &'static Vec<&'static str> {
