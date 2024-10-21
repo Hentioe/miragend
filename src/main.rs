@@ -63,7 +63,7 @@ async fn handler(request: Request<Body>) -> Html<String> {
             };
             Strategy::Patch(config)
         }
-        "obfuscation" => Strategy::Obfuscation,
+        "obfuscation" | "obfus" => Strategy::Obfuscation,
         s => {
             // 无效的策略，回到后备策略
             error!("invalid strategy: `{}`, fallback strategy", s);
