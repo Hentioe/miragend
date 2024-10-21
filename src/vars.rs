@@ -34,6 +34,14 @@ static OBFUSCATION_MESTA_TAGS: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
     }
 });
 
+static OBFUSCATION_IGNORE_NDOES: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
+    std::env::var("FAKE_BACKEND_OBFUSCATION_IGNORE_NODES")
+        .unwrap_or_default()
+        .split(',')
+        .map(|s| Box::leak(s.to_owned().into_boxed_str()) as &'static str)
+        .collect()
+});
+
 pub fn bind() -> &'static str {
     &BIND
 }
@@ -60,4 +68,8 @@ pub fn patch_remove_nodes() -> &'static Vec<&'static str> {
 
 pub fn obfuscation_meta_tags() -> &'static Vec<&'static str> {
     &OBFUSCATION_MESTA_TAGS
+}
+
+pub fn obfuscation_ignore_nodes() -> &'static Vec<&'static str> {
+    &OBFUSCATION_IGNORE_NDOES
 }

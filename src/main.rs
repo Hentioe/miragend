@@ -1,7 +1,7 @@
 use anyhow::Context;
 use axum::{body::Body, http::Request, response::Html, routing::get, Router};
 use html5ever::tendril::TendrilSink;
-use html5ever::{parse_document, parse_fragment, serialize, QualName};
+use html5ever::{parse_document, parse_fragment, serialize, LocalName, QualName};
 use log::{error, info};
 use markup5ever::{local_name, namespace_url, ns};
 use markup5ever_rcdom::{Handle, Node, NodeData::Element, RcDom, SerializableHandle};
@@ -167,6 +167,20 @@ fn obfuscate_content(handle: Handle) {
                 ref attrs,
                 ..
             } => {
+                let find_attr = |name: LocalName| {
+                    attrs
+                        .borrow()
+                        .iter()
+                        .find(|attr| attr.name.local == name)
+                        .map(|attr| attr.value.clone())
+                };
+
+                if let Some(id) = find_attr(local_name!("id")) {
+                    if vars::obfuscation_ignore_nodes().contains(&id.as_ref()) {
+                        continue;
+                    }
+                }
+
                 let tag_name = name.local.as_ref();
                 if IGNORE_OBFUSCATION_TAGS.contains(&tag_name) {
                     continue;
@@ -174,24 +188,9 @@ fn obfuscate_content(handle: Handle) {
                     // 混淆元标签的 content 属性：
                     // - 如果元标签的 name 是 OBFUSCATION_META_TAGS 之一，则混淆 content 属性
                     // - 如果元标签的 property 是 OBFUSCATION_META_TAGS 之一，则混淆 content 属性
-                    let finded_meta_name = attrs
-                        .borrow()
-                        .iter()
-                        .find(|attr| attr.name.local == local_name!("name"))
-                        .map(|attr| attr.value.clone());
-                    let finded_meta_property = attrs
-                        .borrow()
-                        .iter()
-                        .find(|attr| attr.name.local == local_name!("property"))
-                        .map(|attr| attr.value.clone());
                     let update_content = |name_or_property: &str| {
                         if vars::obfuscation_meta_tags().contains(&name_or_property) {
-                            let meta_content = attrs
-                                .borrow()
-                                .iter()
-                                .find(|attr| attr.name.local == local_name!("content"))
-                                .map(|attr| attr.value.clone());
-                            if let Some(mut content) = meta_content {
+                            if let Some(mut content) = find_attr(local_name!("content")) {
                                 attrs.borrow_mut().iter_mut().for_each(|attr| {
                                     if attr.name.local == local_name!("content") {
                                         attr.value = obfuscater::obfuscate_text(&mut content);
@@ -200,11 +199,11 @@ fn obfuscate_content(handle: Handle) {
                             }
                         }
                     };
-                    if let Some(meta_name) = finded_meta_name {
+                    if let Some(meta_name) = find_attr(local_name!("name")) {
                         update_content(&meta_name);
                     }
 
-                    if let Some(meta_name) = finded_meta_property {
+                    if let Some(meta_name) = find_attr(local_name!("property")) {
                         update_content(&meta_name);
                     }
 
