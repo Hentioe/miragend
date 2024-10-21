@@ -15,7 +15,7 @@ mod vars;
 // 后备补丁内容
 const FALLBACK_PATCH_MARKDOWN: &str = include_str!("../patch-content.md");
 // 忽略混淆文本的标签
-const IGNORE_OBFUSCATE_TAGS: [&str; 5] = ["script", "noscript", "style", "template", "iframe"];
+const IGNORE_OBFUSCATION_TAGS: [&str; 5] = ["script", "noscript", "style", "template", "iframe"];
 // 策略
 enum Strategy {
     // 补丁
@@ -168,12 +168,12 @@ fn obfuscate_content(handle: Handle) {
                 ..
             } => {
                 let tag_name = name.local.as_ref();
-                if IGNORE_OBFUSCATE_TAGS.contains(&tag_name) {
+                if IGNORE_OBFUSCATION_TAGS.contains(&tag_name) {
                     continue;
                 } else if tag_name == "meta" {
                     // 混淆元标签的 content 属性：
-                    // - 如果元标签的 name 是 OBFUSCATED_META_TAGS 之一，则混淆 content 属性
-                    // - 如果元标签的 property 是 OBFUSCATED_META_TAGS 之一，则混淆 content 属性
+                    // - 如果元标签的 name 是 OBFUSCATION_META_TAGS 之一，则混淆 content 属性
+                    // - 如果元标签的 property 是 OBFUSCATION_META_TAGS 之一，则混淆 content 属性
                     let finded_meta_name = attrs
                         .borrow()
                         .iter()
@@ -185,7 +185,7 @@ fn obfuscate_content(handle: Handle) {
                         .find(|attr| attr.name.local == local_name!("property"))
                         .map(|attr| attr.value.clone());
                     let update_content = |name_or_property: &str| {
-                        if vars::obfuscated_meta_tags().contains(&name_or_property) {
+                        if vars::obfuscation_meta_tags().contains(&name_or_property) {
                             let meta_content = attrs
                                 .borrow()
                                 .iter()
