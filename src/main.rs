@@ -1,10 +1,17 @@
-use anyhow::Context;
-use axum::{body::Body, http::Request, response::Html, routing::get, Router};
+use anyhow::{anyhow, Context};
+use axum::body::Body;
+use axum::response::{IntoResponse, Response};
+use axum::{
+    http::{header, Request},
+    routing::get,
+    Router,
+};
 use html5ever::tendril::TendrilSink;
 use html5ever::{parse_document, parse_fragment, serialize, LocalName, QualName};
 use log::{error, info};
 use markup5ever::{local_name, namespace_url, ns};
 use markup5ever_rcdom::{Handle, Node, NodeData::Element, RcDom, SerializableHandle};
+use reqwest::StatusCode;
 use std::cell::RefCell;
 use std::path::Path;
 use std::rc::Rc;
@@ -16,6 +23,10 @@ mod vars;
 const FALLBACK_PATCH_MARKDOWN: &str = include_str!("../patch-content.md");
 // 忽略混淆文本的标签
 const IGNORE_OBFUSCATION_TAGS: [&str; 5] = ["script", "noscript", "style", "template", "iframe"];
+// 502 错误内容
+const BAD_GATEWAY_CONTENT: &str = "bad gateway";
+// 500 错误内容
+const INTERNAL_SERVER_ERROR_CONTENT: &str = "internal server error";
 // 策略
 enum Strategy<'a> {
     // 补丁
@@ -29,6 +40,11 @@ struct PatchConfig<'a> {
     content: String,
     remove_nodes: &'a Vec<&'a str>,
     remove_meta_tags: &'a Vec<&'a str>,
+}
+
+struct FetchResp {
+    status: StatusCode,
+    body: String,
 }
 
 #[tokio::main]
@@ -50,8 +66,9 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn handler(request: Request<Body>) -> Html<String> {
-    let url = &format!("{}{}", vars::upstream_base_url(), request.uri());
+async fn handler(request: Request<Body>) -> Response<Body> {
+    let path = request.uri();
+    let url = &format!("{}{}", vars::upstream_base_url(), path);
     let strategy = match vars::strategy() {
         "patch" => {
             let patch_markdown = load_patch_content();
@@ -73,23 +90,87 @@ async fn handler(request: Request<Body>) -> Html<String> {
         }
     };
 
-    match patch_page(url, &strategy).await {
-        Ok(html) => Html(html),
-        Err(e) => Html(format!("Error: {}", e)),
+    match fetch_body(url).await {
+        Ok(resp) => match patch_page(&resp.body, &strategy).await {
+            Ok(html) => {
+                info!("{} \"{}\" => \"{}\"", resp.status, request.uri(), url);
+
+                match Response::builder()
+                    .status(resp.status)
+                    .header(header::CONTENT_TYPE, "text/html; charset=utf-8")
+                    .body(Body::new(html))
+                    .context("failed to create response")
+                {
+                    Ok(resp) => resp,
+                    Err(e) => {
+                        error!("{}", e);
+                        build_500_resp()
+                    }
+                }
+            }
+            Err(e) => {
+                info!(
+                    "{} \"{}\" => \"{}\"",
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    request.uri(),
+                    url
+                );
+                error!("{}", e);
+
+                build_500_resp()
+            }
+        },
+
+        Err(msg) => {
+            info!(
+                "{} \"{}\" => \"{}\"",
+                StatusCode::BAD_GATEWAY,
+                request.uri(),
+                url
+            );
+            error!("{}", msg);
+
+            (StatusCode::BAD_GATEWAY, BAD_GATEWAY_CONTENT).into_response()
+        }
     }
 }
 
-async fn patch_page<'a>(url: &str, strategy: &'a Strategy<'_>) -> anyhow::Result<String> {
-    let body = reqwest::get(url)
+async fn fetch_body(url: &str) -> anyhow::Result<FetchResp> {
+    let resp = reqwest::get(url)
         .await
-        .context(format!("failed to fetch url: {}", url))?
-        .text()
-        .await
-        .context("failed to read response body")?;
+        .context(format!("failed to fetch url: {}", url))?;
 
+    // 读取 content-type，如果为空或 `text/html`，则返回 body
+    let is_html = match resp.headers().get("content-type") {
+        None => true,
+        Some(header) => {
+            let value = header.to_str()?;
+            value.starts_with("text/html")
+        }
+    };
+
+    if is_html {
+        Ok(FetchResp {
+            status: resp.status(),
+            body: resp.text().await.context("failed to read response body")?,
+        })
+    } else {
+        Err(anyhow!("response content-type is not text/html"))
+    }
+}
+
+fn build_500_resp() -> Response<Body> {
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        INTERNAL_SERVER_ERROR_CONTENT,
+    )
+        .into_response()
+}
+
+async fn patch_page<'a>(html: &str, strategy: &'a Strategy<'_>) -> anyhow::Result<String> {
     let dom = parse_document(RcDom::default(), Default::default())
         .from_utf8()
-        .read_from(&mut body.as_bytes())
+        .read_from(&mut html.as_bytes())
         .context("failed to parse document")?;
 
     let _extending_lifecycle = match strategy {
