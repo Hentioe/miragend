@@ -1,5 +1,5 @@
-use std::ops::RangeInclusive;
 use html5ever::tendril::{fmt::UTF8, Tendril};
+use std::ops::RangeInclusive;
 
 // 常见汉字范围
 const CHINESE_RANGE: RangeInclusive<char> = '\u{4e00}'..='\u{9fa5}';

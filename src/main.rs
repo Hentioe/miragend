@@ -28,6 +28,7 @@ struct PatchConfig<'a> {
     target: String,
     content: String,
     remove_nodes: &'a Vec<&'a str>,
+    remove_meta_tags: &'a Vec<&'a str>,
 }
 
 #[tokio::main]
@@ -60,6 +61,7 @@ async fn handler(request: Request<Body>) -> Html<String> {
                 target: vars::patch_target().to_owned(),
                 content: patch_html,
                 remove_nodes: vars::patch_remove_nodes(),
+                remove_meta_tags: vars::patch_remove_meta_tags(),
             };
             Strategy::Patch(config)
         }
@@ -108,6 +110,7 @@ async fn patch_page<'a>(url: &str, strategy: &'a Strategy<'_>) -> anyhow::Result
             for node in config.remove_nodes {
                 remove_children(dom.document.clone(), node);
             }
+            remove_meta_tags(dom.document.clone(), config.remove_meta_tags);
 
             Some(fragment_dom)
         }
@@ -216,6 +219,62 @@ fn obfuscate_content(handle: Handle) {
                 contents.replace_with(obfuscation::obfuscate_text);
             }
             _ => obfuscate_content(child.clone()),
+        }
+    }
+}
+
+fn remove_meta_tags(handle: Handle, tags: &Vec<&str>) {
+    let node = handle;
+    let children = node.children.borrow();
+    for child in children.iter() {
+        match child.data {
+            Element { ref name, .. } => {
+                if name.local == local_name!("head") {
+                    child.children.replace_with(|children| {
+                        children.retain(|head_child| match head_child.data {
+                            Element {
+                                ref name,
+                                ref attrs,
+                                ..
+                            } => {
+                                if name.local == local_name!("meta") {
+                                    let find_attr = |name: LocalName| {
+                                        attrs
+                                            .borrow()
+                                            .iter()
+                                            .find(|attr| attr.name.local == name)
+                                            .map(|attr| attr.value.clone())
+                                    };
+                                    let mut is_retain = true;
+                                    if let Some(meta_name) = find_attr(local_name!("name")) {
+                                        if tags.contains(&meta_name.as_ref()) {
+                                            is_retain = false;
+                                        }
+                                    }
+
+                                    if let Some(meta_property) = find_attr(local_name!("property"))
+                                    {
+                                        if tags.contains(&meta_property.as_ref()) {
+                                            is_retain = false;
+                                        }
+                                    }
+
+                                    is_retain
+                                } else {
+                                    true
+                                }
+                            }
+                            _ => true,
+                        });
+
+                        children.to_vec()
+                    });
+                    continue;
+                } else {
+                    remove_meta_tags(child.clone(), tags);
+                }
+            }
+            _ => remove_meta_tags(child.clone(), tags),
         }
     }
 }
