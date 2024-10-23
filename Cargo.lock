@@ -496,6 +496,7 @@ dependencies = [
  "comrak",
  "env_logger",
  "html5ever",
+ "http",
  "log",
  "markup5ever",
  "markup5ever_rcdom",

@@ -8,15 +8,16 @@ use axum::{
 };
 use html5ever::tendril::TendrilSink;
 use html5ever::{parse_document, parse_fragment, serialize, LocalName, QualName};
+use http::StatusCode;
 use log::{error, info};
 use markup5ever::{local_name, namespace_url, ns};
 use markup5ever_rcdom::{Handle, Node, NodeData::Element, RcDom, SerializableHandle};
-use reqwest::StatusCode;
 use std::cell::RefCell;
 use std::path::Path;
 use std::rc::Rc;
 
 mod obfuscation;
+mod request;
 mod vars;
 
 // 后备补丁内容
@@ -136,9 +137,20 @@ async fn handler(request: Request<Body>) -> Response<Body> {
 }
 
 async fn fetch_body(url: &str) -> anyhow::Result<FetchResp> {
-    let resp = reqwest::get(url)
-        .await
-        .context(format!("failed to fetch url: {}", url))?;
+    let resp = match request::get(url).await {
+        Ok(resp) => resp,
+
+        Err(request::RequestError::Timeout) => {
+            return Ok(FetchResp {
+                status: StatusCode::GATEWAY_TIMEOUT,
+                body: "gateway timeout".to_owned(),
+            });
+        }
+
+        Err(request::RequestError::Reqwest(e)) => {
+            return Err(anyhow!(e));
+        }
+    };
 
     // 读取 content-type，如果为空或 `text/html`，则返回 body
     let is_html = match resp.headers().get("content-type") {
@@ -159,6 +171,7 @@ async fn fetch_body(url: &str) -> anyhow::Result<FetchResp> {
     }
 }
 
+// TODO: 把所有失败状态都构造为 text/html 响应
 fn build_500_resp() -> Response<Body> {
     (
         StatusCode::INTERNAL_SERVER_ERROR,

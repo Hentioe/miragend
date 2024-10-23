@@ -15,3 +15,4 @@ reqwest = "0.12.8"
 tokio = { version = "1.40.0", features = ["rt-multi-thread"] }
 comrak = "0.29.0"
 rand = "0.8.5"
+http = "1.1.0"

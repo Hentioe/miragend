@@ -45,6 +45,13 @@ static OBFUSCATION_IGNORE_NDOES: LazyLock<Vec<&'static str>> = LazyLock::new(|| 
         .map(|s| Box::leak(s.to_owned().into_boxed_str()) as &'static str)
         .collect()
 });
+const DEFAULT_TIMEOUT_SECS: u64 = 60;
+static CONNECT_TIMEOUT_SECS: LazyLock<u64> = LazyLock::new(|| {
+    std::env::var("FAKE_BACKEND_CONNECT_TIMEOUT_SECS")
+        .unwrap_or(DEFAULT_TIMEOUT_SECS.to_string())
+        .parse()
+        .expect("invalid `FAKE_BACKEND_CONNECT_TIMEOUT_SECS` env var")
+});
 
 pub fn bind() -> &'static str {
     &BIND
@@ -80,4 +87,8 @@ pub fn obfuscation_meta_tags() -> &'static Vec<&'static str> {
 
 pub fn obfuscation_ignore_nodes() -> &'static Vec<&'static str> {
     &OBFUSCATION_IGNORE_NDOES
+}
+
+pub fn connect_timeout_secs() -> u64 {
+    *CONNECT_TIMEOUT_SECS
 }
