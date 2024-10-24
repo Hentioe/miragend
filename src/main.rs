@@ -52,8 +52,12 @@ struct FetchResp {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let _args = cli::Args::parse();
     env_logger::init();
+    if dotenvy::dotenv().is_ok() {
+        info!("loaded .env file");
+    }
+    validate_config()?;
+    let _args = cli::Args::parse();
 
     let app = Router::new().route("/*path", get(handler));
     let bind = vars::bind();
@@ -66,6 +70,14 @@ async fn main() -> anyhow::Result<()> {
     axum::serve(listener, app)
         .await
         .context("failed to run server")?;
+
+    Ok(())
+}
+
+fn validate_config() -> anyhow::Result<()> {
+    if vars::upstream_base_url().is_empty() {
+        return Err(anyhow!("missing `FAKE_BACKEND_UPSTREAM_BASE_URL` env var"));
+    }
 
     Ok(())
 }

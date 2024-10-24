@@ -2,10 +2,8 @@ use std::sync::LazyLock;
 
 static BIND: LazyLock<String> =
     LazyLock::new(|| std::env::var("FAKE_BACKEND_BIND").unwrap_or("0.0.0.0:8080".to_owned()));
-static UPSTREAM_BASE_URL: LazyLock<String> = LazyLock::new(|| {
-    std::env::var("FAKE_BACKEND_UPSTREAM_BASE_URL")
-        .expect("missing `FAKE_BACKEND_UPSTREAM_BASE_URL` env var")
-});
+static UPSTREAM_BASE_URL: LazyLock<String> =
+    LazyLock::new(|| std::env::var("FAKE_BACKEND_UPSTREAM_BASE_URL").unwrap_or_default());
 static STRATEGY: LazyLock<String> =
     LazyLock::new(|| std::env::var("FAKE_BACKEND_STRATEGY").unwrap_or("obfuscation".to_owned()));
 static PATCH_TARGET: LazyLock<String> =
@@ -50,7 +48,7 @@ static CONNECT_TIMEOUT_SECS: LazyLock<u64> = LazyLock::new(|| {
     std::env::var("FAKE_BACKEND_CONNECT_TIMEOUT_SECS")
         .unwrap_or(DEFAULT_TIMEOUT_SECS.to_string())
         .parse()
-        .expect("invalid `FAKE_BACKEND_CONNECT_TIMEOUT_SECS` env var")
+        .unwrap_or(DEFAULT_TIMEOUT_SECS)
 });
 
 pub fn bind() -> &'static str {
