@@ -1,3 +1,4 @@
+use crate::special_response;
 use std::sync::LazyLock;
 
 static BIND: LazyLock<String> =
@@ -50,6 +51,18 @@ static CONNECT_TIMEOUT_SECS: LazyLock<u64> = LazyLock::new(|| {
         .parse()
         .unwrap_or(DEFAULT_TIMEOUT_SECS)
 });
+static SPECIAL_PAGE_STYLE: LazyLock<special_response::Style> =
+    LazyLock::new(|| {
+        match std::env::var("FAKE_BACKEND_SPECIAL_PAGE_STYLE")
+            .unwrap_or_default()
+            .as_str()
+        {
+            "nginx" => special_response::Style::Nginx,
+            _ => special_response::Style::None,
+        }
+    });
+
+pub const CONTENT_TYPE_VALUE_TEXT_HTML: &str = "text/html; charset=utf-8";
 
 pub fn bind() -> &'static str {
     &BIND
@@ -89,4 +102,8 @@ pub fn obfuscation_ignore_nodes() -> &'static Vec<&'static str> {
 
 pub fn connect_timeout_secs() -> u64 {
     *CONNECT_TIMEOUT_SECS
+}
+
+pub fn special_page_style() -> special_response::Style {
+    *SPECIAL_PAGE_STYLE
 }

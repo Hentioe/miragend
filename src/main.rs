@@ -1,6 +1,6 @@
 use anyhow::{anyhow, Context};
 use axum::body::Body;
-use axum::response::{IntoResponse, Response};
+use axum::response::Response;
 use axum::{
     http::{header, Request},
     routing::get,
@@ -9,7 +9,7 @@ use axum::{
 use clap::Parser;
 use html5ever::tendril::TendrilSink;
 use html5ever::{parse_document, parse_fragment, serialize, LocalName, QualName};
-use http::StatusCode;
+use http::{StatusCode, Uri};
 use log::{error, info};
 use markup5ever::{local_name, namespace_url, ns};
 use markup5ever_rcdom::{Handle, Node, NodeData::Element, RcDom, SerializableHandle};
@@ -20,6 +20,7 @@ use std::rc::Rc;
 mod cli;
 mod obfuscation;
 mod request;
+mod special_response;
 mod vars;
 
 // 后备补丁内容
@@ -27,10 +28,6 @@ const FALLBACK_PATCH_MARKDOWN: &str = include_str!("../patch-content.md");
 const FALLBACK_PATCH_HTML: &str = include_str!("../patch-content.html");
 // 忽略混淆文本的标签
 const IGNORE_OBFUSCATION_TAGS: [&str; 5] = ["script", "noscript", "style", "template", "iframe"];
-// 502 错误内容
-const BAD_GATEWAY_CONTENT: &str = "bad gateway";
-// 500 错误内容
-const INTERNAL_SERVER_ERROR_CONTENT: &str = "internal server error";
 // 策略
 enum Strategy<'a> {
     // 补丁
@@ -46,7 +43,13 @@ struct PatchConfig<'a> {
     remove_meta_tags: &'a Vec<&'a str>,
 }
 
-struct FetchResp {
+enum Fetched {
+    Special(StatusCode),
+    Forward(RespForwarding),
+}
+
+struct RespForwarding {
+    // todo: 补充响应头字段
     status: StatusCode,
     body: String,
 }
@@ -105,13 +108,13 @@ async fn handler(request: Request<Body>) -> Response<Body> {
         }
     };
 
-    match fetch_body(url).await {
-        Ok(resp) => match patch_page(&resp.body, &strategy).await {
+    match fetch(url).await {
+        Fetched::Forward(forwarding) => match patch_page(&forwarding.body, &strategy).await {
             Ok(html) => {
-                info!("{} \"{}\" => \"{}\"", resp.status, request.uri(), url);
+                route_log(forwarding.status, request.uri(), url);
 
                 match Response::builder()
-                    .status(resp.status)
+                    .status(forwarding.status)
                     .header(header::CONTENT_TYPE, "text/html; charset=utf-8")
                     .body(Body::new(html))
                     .context("failed to create response")
@@ -119,79 +122,76 @@ async fn handler(request: Request<Body>) -> Response<Body> {
                     Ok(resp) => resp,
                     Err(e) => {
                         error!("{}", e);
-                        build_500_resp()
+                        special_response::build_resp_with_fallback(
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                        )
                     }
                 }
             }
             Err(e) => {
-                info!(
-                    "{} \"{}\" => \"{}\"",
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    request.uri(),
-                    url
-                );
+                route_log(StatusCode::INTERNAL_SERVER_ERROR, request.uri(), url);
                 error!("{}", e);
 
-                build_500_resp()
+                special_response::build_resp_with_fallback(StatusCode::INTERNAL_SERVER_ERROR)
             }
         },
 
-        Err(msg) => {
-            info!(
-                "{} \"{}\" => \"{}\"",
-                StatusCode::BAD_GATEWAY,
-                request.uri(),
-                url
-            );
-            error!("{}", msg);
+        Fetched::Special(status_code) => {
+            info!("{} \"{}\" => \"{}\"", status_code, request.uri(), url);
 
-            (StatusCode::BAD_GATEWAY, BAD_GATEWAY_CONTENT).into_response()
+            special_response::build_resp_with_fallback(status_code)
         }
     }
 }
 
-async fn fetch_body(url: &str) -> anyhow::Result<FetchResp> {
+fn route_log(status_code: StatusCode, path: &Uri, url: &str) {
+    info!("{} \"{}\" => \"{}\"", status_code, path, url);
+}
+
+async fn fetch(url: &str) -> Fetched {
     let resp = match request::get(url).await {
         Ok(resp) => resp,
 
         Err(request::RequestError::Timeout) => {
-            return Ok(FetchResp {
-                status: StatusCode::GATEWAY_TIMEOUT,
-                body: "gateway timeout".to_owned(),
-            });
+            return Fetched::Special(StatusCode::GATEWAY_TIMEOUT);
         }
 
         Err(request::RequestError::Reqwest(e)) => {
-            return Err(anyhow!(e));
+            error!("{}", e);
+            return Fetched::Special(StatusCode::BAD_GATEWAY);
         }
     };
 
     // 读取 content-type，如果为空或 `text/html`，则返回 body
     let is_html = match resp.headers().get("content-type") {
         None => true,
-        Some(header) => {
-            let value = header.to_str()?;
-            value.starts_with("text/html")
-        }
+        Some(header) => match header.to_str() {
+            Ok(value) => value.starts_with("text/html"),
+            Err(e) => {
+                error!("illegal content-type: {}", e);
+
+                return Fetched::Special(StatusCode::BAD_GATEWAY);
+            }
+        },
     };
 
     if is_html {
-        Ok(FetchResp {
-            status: resp.status(),
-            body: resp.text().await.context("failed to read response body")?,
-        })
-    } else {
-        Err(anyhow!("response content-type is not text/html"))
-    }
-}
+        let status = resp.status();
+        let body = match resp.text().await {
+            Ok(body) => body,
+            Err(e) => {
+                // 读取响应体失败
+                error!("failed to read response body: {}", e);
 
-// TODO: 把所有失败状态都构造为 text/html 响应
-fn build_500_resp() -> Response<Body> {
-    (
-        StatusCode::INTERNAL_SERVER_ERROR,
-        INTERNAL_SERVER_ERROR_CONTENT,
-    )
-        .into_response()
+                return Fetched::Special(StatusCode::BAD_GATEWAY);
+            }
+        };
+        Fetched::Forward(RespForwarding { status, body })
+    } else {
+        error!("response content-type is not text/html");
+
+        Fetched::Special(StatusCode::BAD_GATEWAY)
+    }
 }
 
 async fn patch_page<'a>(html: &str, strategy: &'a Strategy<'_>) -> anyhow::Result<String> {
