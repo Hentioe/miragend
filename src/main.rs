@@ -24,6 +24,7 @@ mod vars;
 
 // 后备补丁内容
 const FALLBACK_PATCH_MARKDOWN: &str = include_str!("../patch-content.md");
+const FALLBACK_PATCH_HTML: &str = include_str!("../patch-content.html");
 // 忽略混淆文本的标签
 const IGNORE_OBFUSCATION_TAGS: [&str; 5] = ["script", "noscript", "style", "template", "iframe"];
 // 502 错误内容
@@ -87,9 +88,7 @@ async fn handler(request: Request<Body>) -> Response<Body> {
     let url = &format!("{}{}", vars::upstream_base_url(), path);
     let strategy = match vars::strategy() {
         "patch" => {
-            let patch_markdown = load_patch_content();
-            let patch_html =
-                comrak::markdown_to_html(&patch_markdown, &comrak::ComrakOptions::default());
+            let patch_html = load_patch_html(vars::patch_content_file());
             let config = PatchConfig {
                 target: vars::patch_target().to_owned(),
                 content: patch_html,
@@ -414,11 +413,30 @@ fn find_elements(handle: &Handle) -> Vec<Rc<Node>> {
     }
 }
 
-fn load_patch_content() -> String {
-    if !vars::patch_content_file().is_empty() {
-        std::fs::read_to_string(Path::new(vars::patch_content_file()))
-            .unwrap_or_else(|_| FALLBACK_PATCH_MARKDOWN.to_string())
+fn load_patch_html(patch_content_file: &str) -> String {
+    if patch_content_file.is_empty() {
+        let markdown = FALLBACK_PATCH_MARKDOWN.to_string();
+
+        markdown_to_html(&markdown)
+    } else if patch_content_file.ends_with(".md") {
+        let markdown = std::fs::read_to_string(Path::new(patch_content_file))
+            .unwrap_or_else(|_| FALLBACK_PATCH_MARKDOWN.to_string());
+
+        markdown_to_html(&markdown)
+    } else if patch_content_file.ends_with(".html") {
+        std::fs::read_to_string(Path::new(patch_content_file))
+            .unwrap_or_else(|_| FALLBACK_PATCH_HTML.to_string())
     } else {
-        FALLBACK_PATCH_MARKDOWN.to_string()
+        let text = std::fs::read_to_string(Path::new(patch_content_file))
+            .unwrap_or_else(|_| "Hello from Miragend!".to_owned());
+
+        // Split text by newlines and wrap each line in <p> tags
+        text.lines().fold(String::new(), |acc, line| {
+            format!("{}\n<p>{}</p>", acc, line)
+        })
     }
+}
+
+fn markdown_to_html(markdown: &str) -> String {
+    comrak::markdown_to_html(markdown, &comrak::ComrakOptions::default())
 }
