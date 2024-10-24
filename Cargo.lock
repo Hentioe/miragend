@@ -493,6 +493,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "axum",
+ "clap",
  "comrak",
  "env_logger",
  "html5ever",

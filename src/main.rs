@@ -6,6 +6,7 @@ use axum::{
     routing::get,
     Router,
 };
+use clap::Parser;
 use html5ever::tendril::TendrilSink;
 use html5ever::{parse_document, parse_fragment, serialize, LocalName, QualName};
 use http::StatusCode;
@@ -16,6 +17,7 @@ use std::cell::RefCell;
 use std::path::Path;
 use std::rc::Rc;
 
+mod cli;
 mod obfuscation;
 mod request;
 mod vars;
@@ -50,6 +52,7 @@ struct FetchResp {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    let _args = cli::Args::parse();
     env_logger::init();
 
     let app = Router::new().route("/*path", get(handler));
