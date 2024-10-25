@@ -13,6 +13,7 @@ use markup5ever_rcdom::{Handle, Node, NodeData::Element, RcDom, SerializableHand
 use std::cell::RefCell;
 use std::path::Path;
 use std::rc::Rc;
+use tokio::signal;
 
 mod cli;
 mod headers;
@@ -70,6 +71,7 @@ async fn main() -> anyhow::Result<()> {
     info!("listening on: http://{}", bind);
 
     axum::serve(listener, app)
+        .with_graceful_shutdown(shutdown_signal())
         .await
         .context("failed to run server")?;
 
@@ -442,4 +444,28 @@ fn load_patch_html(patch_content_file: &str) -> String {
 
 fn markdown_to_html(markdown: &str) -> String {
     comrak::markdown_to_html(markdown, &comrak::ComrakOptions::default())
+}
+
+async fn shutdown_signal() {
+    let ctrl_c = async {
+        signal::ctrl_c()
+            .await
+            .expect("failed to install Ctrl+C handler");
+    };
+
+    #[cfg(unix)]
+    let terminate = async {
+        signal::unix::signal(signal::unix::SignalKind::terminate())
+            .expect("failed to install signal handler")
+            .recv()
+            .await;
+    };
+
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+
+    tokio::select! {
+        _ = ctrl_c => {},
+        _ = terminate => {},
+    }
 }
