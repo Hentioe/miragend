@@ -1,15 +1,12 @@
 use anyhow::{anyhow, Context};
 use axum::body::Body;
 use axum::response::Response;
-use axum::{
-    http::{header, Request},
-    routing::get,
-    Router,
-};
+use axum::{http::Request, routing::get, Router};
 use clap::Parser;
+use headers::AppendHeaders;
 use html5ever::tendril::TendrilSink;
 use html5ever::{parse_document, parse_fragment, serialize, LocalName, QualName};
-use http::{StatusCode, Uri};
+use http::{HeaderMap, StatusCode, Uri};
 use log::{error, info};
 use markup5ever::{local_name, namespace_url, ns};
 use markup5ever_rcdom::{Handle, Node, NodeData::Element, RcDom, SerializableHandle};
@@ -18,6 +15,7 @@ use std::path::Path;
 use std::rc::Rc;
 
 mod cli;
+mod headers;
 mod obfuscation;
 mod request;
 mod special_response;
@@ -49,8 +47,8 @@ enum Fetched {
 }
 
 struct RespForwarding {
-    // todo: 补充响应头字段
     status: StatusCode,
+    headers: HeaderMap,
     body: String,
 }
 
@@ -108,14 +106,14 @@ async fn handler(request: Request<Body>) -> Response<Body> {
         }
     };
 
-    match fetch(url).await {
+    match fetch(url, headers::build_from_request(request.headers())).await {
         Fetched::Forward(forwarding) => match patch_page(&forwarding.body, &strategy).await {
             Ok(html) => {
-                route_log(forwarding.status, request.uri(), url);
+                route_log(forwarding.status, path, url);
 
                 match Response::builder()
                     .status(forwarding.status)
-                    .header(header::CONTENT_TYPE, "text/html; charset=utf-8")
+                    .append_headers(&forwarding.headers)
                     .body(Body::new(html))
                     .context("failed to create response")
                 {
@@ -129,7 +127,7 @@ async fn handler(request: Request<Body>) -> Response<Body> {
                 }
             }
             Err(e) => {
-                route_log(StatusCode::INTERNAL_SERVER_ERROR, request.uri(), url);
+                route_log(StatusCode::INTERNAL_SERVER_ERROR, path, url);
                 error!("{}", e);
 
                 special_response::build_resp_with_fallback(StatusCode::INTERNAL_SERVER_ERROR)
@@ -137,7 +135,7 @@ async fn handler(request: Request<Body>) -> Response<Body> {
         },
 
         Fetched::Special(status_code) => {
-            info!("{} \"{}\" => \"{}\"", status_code, request.uri(), url);
+            route_log(status_code, path, url);
 
             special_response::build_resp_with_fallback(status_code)
         }
@@ -148,8 +146,8 @@ fn route_log(status_code: StatusCode, path: &Uri, url: &str) {
     info!("{} \"{}\" => \"{}\"", status_code, path, url);
 }
 
-async fn fetch(url: &str) -> Fetched {
-    let resp = match request::get(url).await {
+async fn fetch(url: &str, headers: HeaderMap) -> Fetched {
+    let resp = match request::get(url, headers).await {
         Ok(resp) => resp,
 
         Err(request::RequestError::Timeout) => {
@@ -177,6 +175,7 @@ async fn fetch(url: &str) -> Fetched {
 
     if is_html {
         let status = resp.status();
+        let headers = resp.headers().clone();
         let body = match resp.text().await {
             Ok(body) => body,
             Err(e) => {
@@ -186,7 +185,11 @@ async fn fetch(url: &str) -> Fetched {
                 return Fetched::Special(StatusCode::BAD_GATEWAY);
             }
         };
-        Fetched::Forward(RespForwarding { status, body })
+        Fetched::Forward(RespForwarding {
+            status,
+            headers,
+            body,
+        })
     } else {
         error!("response content-type is not text/html");
 

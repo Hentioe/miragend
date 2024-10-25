@@ -1,4 +1,5 @@
 use crate::vars;
+use http::HeaderMap;
 use reqwest::Response;
 use std::time::Duration;
 
@@ -7,9 +8,10 @@ pub enum RequestError {
     Reqwest(reqwest::Error),
 }
 
-pub async fn get(url: &str) -> Result<Response, RequestError> {
+pub async fn get(url: &str, headers: HeaderMap) -> Result<Response, RequestError> {
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(vars::connect_timeout_secs()))
+        .default_headers(headers)
         .build()
         .map_err(RequestError::Reqwest)?;
 

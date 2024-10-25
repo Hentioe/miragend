@@ -1,10 +1,21 @@
 use crate::special_response;
+use http::HeaderValue;
 use std::sync::LazyLock;
 
 static BIND: LazyLock<String> =
     LazyLock::new(|| std::env::var("FAKE_BACKEND_BIND").unwrap_or("0.0.0.0:8080".to_owned()));
 static UPSTREAM_BASE_URL: LazyLock<String> =
     LazyLock::new(|| std::env::var("FAKE_BACKEND_UPSTREAM_BASE_URL").unwrap_or_default());
+static UPSTREAM_DOAMIN: LazyLock<HeaderValue> = LazyLock::new(|| {
+    // TODO: 在启动时手动解析并缓存，避免运行中才出错
+    let url = reqwest::Url::parse(&UPSTREAM_BASE_URL).expect("invalid `UPSTREAM_BASE_URL`");
+    let domain = url
+        .domain()
+        .expect("missing domain in `UPSTREAM_BASE_URL`")
+        .to_owned();
+
+    HeaderValue::from_str(&domain).unwrap_or_else(|_| panic!("invalid header value: {}", domain))
+});
 static STRATEGY: LazyLock<String> =
     LazyLock::new(|| std::env::var("FAKE_BACKEND_STRATEGY").unwrap_or("obfuscation".to_owned()));
 static PATCH_TARGET: LazyLock<String> =
@@ -70,6 +81,10 @@ pub fn bind() -> &'static str {
 
 pub fn upstream_base_url() -> &'static str {
     &UPSTREAM_BASE_URL
+}
+
+pub fn upstream_domain() -> &'static HeaderValue {
+    &UPSTREAM_DOAMIN
 }
 
 pub fn strategy() -> &'static str {
