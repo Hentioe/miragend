@@ -8,7 +8,7 @@ RUN set -xe \
 
 # Use Alpine as the runner
 FROM alpine:3.20 AS runner
-COPY --from=builder /src/target/release/fake_backend /usr/local/bin/fake_backend
+COPY --from=builder /src/target/release/miragend /usr/local/bin/miragend
 ENV RUST_LOG=info
 EXPOSE 8080
-ENTRYPOINT [ "fake_backend" ]
+ENTRYPOINT [ "miragend" ]

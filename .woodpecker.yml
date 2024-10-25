@@ -8,7 +8,7 @@ steps:
     privileged: true
     pull: true
     settings:
-      repo: hentioe/fake-backend
+      repo: hentioe/miragend
       username:
         from_secret: docker_username
       password:

@@ -3,9 +3,9 @@ use http::HeaderValue;
 use std::sync::LazyLock;
 
 static BIND: LazyLock<String> =
-    LazyLock::new(|| std::env::var("FAKE_BACKEND_BIND").unwrap_or("0.0.0.0:8080".to_owned()));
+    LazyLock::new(|| std::env::var("MIRAGEND_BIND").unwrap_or("0.0.0.0:8080".to_owned()));
 static UPSTREAM_BASE_URL: LazyLock<String> = LazyLock::new(|| {
-    std::env::var("FAKE_BACKEND_UPSTREAM_BASE_URL").expect("missing `UPSTREAM_BASE_URL` env var")
+    std::env::var("MIRAGEND_UPSTREAM_BASE_URL").expect("missing `UPSTREAM_BASE_URL` env var")
 });
 static UPSTREAM_DOAMIN: LazyLock<HeaderValue> = LazyLock::new(|| {
     let url = reqwest::Url::parse(&UPSTREAM_BASE_URL).expect("invalid `UPSTREAM_BASE_URL` value");
@@ -17,20 +17,20 @@ static UPSTREAM_DOAMIN: LazyLock<HeaderValue> = LazyLock::new(|| {
     HeaderValue::from_str(&domain).unwrap_or_else(|_| panic!("invalid header value: {}", domain))
 });
 static STRATEGY: LazyLock<String> =
-    LazyLock::new(|| std::env::var("FAKE_BACKEND_STRATEGY").unwrap_or("obfuscation".to_owned()));
+    LazyLock::new(|| std::env::var("MIRAGEND_STRATEGY").unwrap_or("obfuscation".to_owned()));
 static PATCH_TARGET: LazyLock<String> =
-    LazyLock::new(|| std::env::var("FAKE_BACKEND_PATCH_TARGET").unwrap_or_default());
+    LazyLock::new(|| std::env::var("MIRAGEND_PATCH_TARGET").unwrap_or_default());
 static PATCH_CONTENT_FILE: LazyLock<String> =
-    LazyLock::new(|| std::env::var("FAKE_BACKEND_PATCH_CONTENT_FILE").unwrap_or_default());
+    LazyLock::new(|| std::env::var("MIRAGEND_PATCH_CONTENT_FILE").unwrap_or_default());
 static PATCH_REMOVE_NODES: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
-    std::env::var("FAKE_BACKEND_PATCH_REMOVE_NODES")
+    std::env::var("MIRAGEND_PATCH_REMOVE_NODES")
         .unwrap_or_default()
         .split(',')
         .map(|s| Box::leak(s.to_owned().into_boxed_str()) as &'static str)
         .collect()
 });
 static PATCH_REMOVE_META_TAGS: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
-    std::env::var("FAKE_BACKEND_PATCH_REMOVE_META_TAGS")
+    std::env::var("MIRAGEND_PATCH_REMOVE_META_TAGS")
         .unwrap_or_default()
         .split(',')
         .map(|s| Box::leak(s.to_owned().into_boxed_str()) as &'static str)
@@ -39,7 +39,7 @@ static PATCH_REMOVE_META_TAGS: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
 const FALLBACK_OBFUSCATION_MESTA_TAGS: [&str; 4] =
     ["description", "keywords", "og:title", "og:description"];
 static OBFUSCATION_MESTA_TAGS: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
-    if let Ok(tags_text) = std::env::var("FAKE_BACKEND_OBFUSCATION_META_TAGS") {
+    if let Ok(tags_text) = std::env::var("MIRAGEND_OBFUSCATION_META_TAGS") {
         tags_text
             .split(',')
             .map(|s| Box::leak(s.to_owned().into_boxed_str()) as &'static str)
@@ -49,7 +49,7 @@ static OBFUSCATION_MESTA_TAGS: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
     }
 });
 static OBFUSCATION_IGNORE_NDOES: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
-    std::env::var("FAKE_BACKEND_OBFUSCATION_IGNORE_NODES")
+    std::env::var("MIRAGEND_OBFUSCATION_IGNORE_NODES")
         .unwrap_or_default()
         .split(',')
         .map(|s| Box::leak(s.to_owned().into_boxed_str()) as &'static str)
@@ -57,14 +57,14 @@ static OBFUSCATION_IGNORE_NDOES: LazyLock<Vec<&'static str>> = LazyLock::new(|| 
 });
 const DEFAULT_TIMEOUT_SECS: u64 = 60;
 static CONNECT_TIMEOUT_SECS: LazyLock<u64> = LazyLock::new(|| {
-    std::env::var("FAKE_BACKEND_CONNECT_TIMEOUT_SECS")
+    std::env::var("MIRAGEND_CONNECT_TIMEOUT_SECS")
         .unwrap_or(DEFAULT_TIMEOUT_SECS.to_string())
         .parse()
         .unwrap_or(DEFAULT_TIMEOUT_SECS)
 });
 static SPECIAL_PAGE_STYLE: LazyLock<special_response::Style> =
     LazyLock::new(|| {
-        match std::env::var("FAKE_BACKEND_SPECIAL_PAGE_STYLE")
+        match std::env::var("MIRAGEND_SPECIAL_PAGE_STYLE")
             .unwrap_or_default()
             .as_str()
         {

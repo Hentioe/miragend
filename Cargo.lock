@@ -494,26 +494,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "fake_backend"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "axum",
- "clap",
- "comrak",
- "dotenvy",
- "env_logger",
- "html5ever",
- "http",
- "log",
- "markup5ever",
- "markup5ever_rcdom",
- "rand",
- "reqwest",
- "tokio",
-]
-
-[[package]]
 name = "fancy-regex"
 version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -967,6 +947,26 @@ dependencies = [
  "libc",
  "wasi",
  "windows-sys 0.52.0",
+]
+
+[[package]]
+name = "miragend"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "clap",
+ "comrak",
+ "dotenvy",
+ "env_logger",
+ "html5ever",
+ "http",
+ "log",
+ "markup5ever",
+ "markup5ever_rcdom",
+ "rand",
+ "reqwest",
+ "tokio",
 ]
 
 [[package]]
