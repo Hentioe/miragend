@@ -4,14 +4,14 @@ use std::sync::LazyLock;
 
 static BIND: LazyLock<String> =
     LazyLock::new(|| std::env::var("FAKE_BACKEND_BIND").unwrap_or("0.0.0.0:8080".to_owned()));
-static UPSTREAM_BASE_URL: LazyLock<String> =
-    LazyLock::new(|| std::env::var("FAKE_BACKEND_UPSTREAM_BASE_URL").unwrap_or_default());
+static UPSTREAM_BASE_URL: LazyLock<String> = LazyLock::new(|| {
+    std::env::var("FAKE_BACKEND_UPSTREAM_BASE_URL").expect("missing `UPSTREAM_BASE_URL` env var")
+});
 static UPSTREAM_DOAMIN: LazyLock<HeaderValue> = LazyLock::new(|| {
-    // TODO: 在启动时手动解析并缓存，避免运行中才出错
-    let url = reqwest::Url::parse(&UPSTREAM_BASE_URL).expect("invalid `UPSTREAM_BASE_URL`");
+    let url = reqwest::Url::parse(&UPSTREAM_BASE_URL).expect("invalid `UPSTREAM_BASE_URL` value");
     let domain = url
         .domain()
-        .expect("missing domain in `UPSTREAM_BASE_URL`")
+        .expect("missing domain in `UPSTREAM_BASE_URL` value")
         .to_owned();
 
     HeaderValue::from_str(&domain).unwrap_or_else(|_| panic!("invalid header value: {}", domain))
@@ -74,6 +74,12 @@ static SPECIAL_PAGE_STYLE: LazyLock<special_response::Style> =
     });
 
 pub const CONTENT_TYPE_VALUE_TEXT_HTML: &str = "text/html; charset=utf-8";
+
+// Call on startup to avoid runtime initialization errors
+pub fn force_init() {
+    LazyLock::force(&UPSTREAM_BASE_URL);
+    LazyLock::force(&UPSTREAM_DOAMIN);
+}
 
 pub fn bind() -> &'static str {
     &BIND

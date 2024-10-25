@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Context};
+use anyhow::Context;
 use axum::body::Body;
 use axum::response::Response;
 use axum::{http::Request, routing::get, Router};
@@ -79,9 +79,7 @@ async fn main() -> anyhow::Result<()> {
 }
 
 fn validate_config() -> anyhow::Result<()> {
-    if vars::upstream_base_url().is_empty() {
-        return Err(anyhow!("missing `FAKE_BACKEND_UPSTREAM_BASE_URL` env var"));
-    }
+    vars::force_init();
 
     Ok(())
 }
