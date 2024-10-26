@@ -14,7 +14,7 @@ static UPSTREAM_DOAMIN: LazyLock<HeaderValue> = LazyLock::new(|| {
         .expect("missing domain in `UPSTREAM_BASE_URL` value")
         .to_owned();
 
-    HeaderValue::from_str(&domain).unwrap_or_else(|_| panic!("invalid header value: {}", domain))
+    HeaderValue::from_str(&domain).expect("invalid header value in `UPSTREAM_BASE_URL` value")
 });
 static STRATEGY: LazyLock<String> =
     LazyLock::new(|| std::env::var("MIRAGEND_STRATEGY").unwrap_or("obfuscation".to_owned()));
@@ -23,11 +23,14 @@ static PATCH_TARGET: LazyLock<String> =
 static PATCH_CONTENT_FILE: LazyLock<String> =
     LazyLock::new(|| std::env::var("MIRAGEND_PATCH_CONTENT_FILE").unwrap_or_default());
 static PATCH_REMOVE_NODES: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
-    std::env::var("MIRAGEND_PATCH_REMOVE_NODES")
-        .unwrap_or_default()
-        .split(',')
-        .map(|s| Box::leak(s.to_owned().into_boxed_str()) as &'static str)
-        .collect()
+    let text = std::env::var("MIRAGEND_PATCH_REMOVE_NODES").unwrap_or_default();
+    if !text.is_empty() {
+        text.split(',')
+            .map(|s| Box::leak(s.to_owned().into_boxed_str()) as &'static str)
+            .collect()
+    } else {
+        Vec::new()
+    }
 });
 static PATCH_REMOVE_META_TAGS: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
     std::env::var("MIRAGEND_PATCH_REMOVE_META_TAGS")
