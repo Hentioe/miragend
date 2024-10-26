@@ -3,20 +3,21 @@ use axum::body::Body;
 use axum::response::Response;
 use axum::{http::Request, routing::get, Router};
 use clap::Parser;
+use fetching::Loaded;
 use headers::AppendHeaders;
-use html5ever::tendril::TendrilSink;
-use html5ever::{parse_document, parse_fragment, serialize, LocalName, QualName};
-use http::{HeaderMap, StatusCode, Uri};
-use log::{error, info};
-use markup5ever::{local_name, namespace_url, ns};
-use markup5ever_rcdom::{Handle, Node, NodeData::Element, RcDom, SerializableHandle};
-use std::cell::RefCell;
+use html_ops::{DOMBuilder, DOMOps, NodeOps};
+use http::{StatusCode, Uri};
+use log::{error, info, warn};
+use markup5ever::local_name;
+use markup5ever_rcdom::{Handle, Node, NodeData::Element};
 use std::path::Path;
 use std::rc::Rc;
 use tokio::signal;
 
 mod cli;
+mod fetching;
 mod headers;
+mod html_ops;
 mod obfuscation;
 mod request;
 mod special_response;
@@ -40,17 +41,6 @@ struct PatchConfig<'a> {
     content: String,
     remove_nodes: &'a Vec<&'a str>,
     remove_meta_tags: &'a Vec<&'a str>,
-}
-
-enum Fetched {
-    Special(StatusCode),
-    Forward(RespForwarding),
-}
-
-struct RespForwarding {
-    status: StatusCode,
-    headers: HeaderMap,
-    body: String,
 }
 
 #[tokio::main]
@@ -106,14 +96,15 @@ async fn handler(request: Request<Body>) -> Response<Body> {
         }
     };
 
-    match fetch(url, headers::build_from_request(request.headers())).await {
-        Fetched::Forward(forwarding) => match patch_page(&forwarding.body, &strategy).await {
+    let headers = headers::build_from_request(request.headers());
+    match fetching::load(url, headers).await {
+        Loaded::Forward(resp) => match patch_page(&resp.body, &strategy).await {
             Ok(html) => {
-                route_log(forwarding.status, path, url);
+                route_log(resp.status, path, url);
 
                 match Response::builder()
-                    .status(forwarding.status)
-                    .append_headers(&forwarding.headers)
+                    .status(resp.status)
+                    .append_headers(&resp.headers)
                     .body(Body::new(html))
                     .context("failed to create response")
                 {
@@ -134,7 +125,7 @@ async fn handler(request: Request<Body>) -> Response<Body> {
             }
         },
 
-        Fetched::Special(status_code) => {
+        Loaded::Special(status_code) => {
             route_log(status_code, path, url);
 
             special_response::build_resp_with_fallback(status_code)
@@ -146,77 +137,16 @@ fn route_log(status_code: StatusCode, path: &Uri, url: &str) {
     info!("{} \"{}\" => \"{}\"", status_code, path, url);
 }
 
-async fn fetch(url: &str, headers: HeaderMap) -> Fetched {
-    let resp = match request::get(url, headers).await {
-        Ok(resp) => resp,
-
-        Err(request::RequestError::Timeout) => {
-            return Fetched::Special(StatusCode::GATEWAY_TIMEOUT);
-        }
-
-        Err(request::RequestError::Reqwest(e)) => {
-            error!("{}", e);
-            return Fetched::Special(StatusCode::BAD_GATEWAY);
-        }
-    };
-
-    // 读取 content-type，如果为空或 `text/html`，则返回 body
-    let is_html = match resp.headers().get("content-type") {
-        None => true,
-        Some(header) => match header.to_str() {
-            Ok(value) => value.starts_with("text/html"),
-            Err(e) => {
-                error!("illegal content-type: {}", e);
-
-                return Fetched::Special(StatusCode::BAD_GATEWAY);
-            }
-        },
-    };
-
-    if is_html {
-        let status = resp.status();
-        let headers = resp.headers().clone();
-        let body = match resp.text().await {
-            Ok(body) => body,
-            Err(e) => {
-                // 读取响应体失败
-                error!("failed to read response body: {}", e);
-
-                return Fetched::Special(StatusCode::BAD_GATEWAY);
-            }
-        };
-        Fetched::Forward(RespForwarding {
-            status,
-            headers,
-            body,
-        })
-    } else {
-        error!("response content-type is not text/html");
-
-        Fetched::Special(StatusCode::BAD_GATEWAY)
-    }
-}
-
 async fn patch_page<'a>(html: &str, strategy: &'a Strategy<'_>) -> anyhow::Result<String> {
-    let dom = parse_document(RcDom::default(), Default::default())
-        .from_utf8()
-        .read_from(&mut html.as_bytes())
-        .context("failed to parse document")?;
+    let dom = html.build_document().context("failed to parse document")?;
 
     let _extending_lifecycle = match strategy {
         Strategy::Patch(config) => {
-            let fragment_dom = parse_fragment(
-                RcDom::default(),
-                Default::default(),
-                QualName::new(None, ns!(html), local_name!("body")),
-                vec![],
-            )
-            .one(config.content.clone());
-
+            let fragment_dom = config.content.build_fragment();
             replace_children(
                 dom.document.clone(),
                 &config.target,
-                find_elements(&fragment_dom.document),
+                html_ops::extract_contents(&fragment_dom.document),
             );
             for node in config.remove_nodes {
                 remove_children(dom.document.clone(), node);
@@ -226,193 +156,119 @@ async fn patch_page<'a>(html: &str, strategy: &'a Strategy<'_>) -> anyhow::Resul
             Some(fragment_dom)
         }
         Strategy::Obfuscation => {
-            obfuscate_content(dom.document.clone());
+            obfuscate_text(dom.document.clone());
+            obfuscate_meta_content(dom.document.clone(), vars::obfuscation_meta_tags());
 
             None
         }
     };
 
-    let mut buf = Vec::new();
-    let document: SerializableHandle = dom.document.clone().into();
-    serialize(&mut buf, &document, Default::default()).context("failed to serialize document")?;
-    let new_html = String::from_utf8(buf).context("failed to convert utf8")?;
-
-    Ok(new_html)
+    html_ops::serialize_to_html(dom).context("failed to serialize document")
 }
 
-fn replace_children(handle: Handle, target_id: &str, new_children: Vec<Rc<Node>>) {
-    let node = handle;
-    let children = node.children.borrow();
-    for child in children.iter() {
-        match &child.data {
-            Element { ref attrs, .. } => {
-                // 查找 id 属性
-                let id = attrs.borrow().iter().find_map(|attr| {
-                    if attr.name.local == local_name!("id") {
-                        Some(attr.value.clone())
-                    } else {
-                        None
-                    }
-                });
-
-                // 匹配目标 id
-                if id.as_deref() == Some(target_id) {
-                    child.children.replace(new_children);
-                    return;
-                } else {
-                    replace_children(child.clone(), target_id, new_children.clone());
-                }
-            }
-            _ => replace_children(child.clone(), target_id, new_children.clone()),
-        }
+fn replace_children(handle: Handle, node_id: &str, new_children: Vec<Rc<Node>>) {
+    if let Some(node) = handle.get_element_by_id(node_id) {
+        node.children.replace(new_children);
+    } else {
+        warn!("node with id `{}` not found", node_id);
     }
 }
-fn remove_children(handle: Handle, target_id: &str) {
-    replace_children(handle, target_id, vec![])
+
+fn remove_children(handle: Handle, node_id: &str) {
+    replace_children(handle, node_id, vec![])
 }
 
-fn obfuscate_content(handle: Handle) {
+fn obfuscate_text(handle: Handle) {
     let node = handle;
     let children = node.children.borrow();
     for child in children.iter() {
         match child.data {
-            Element {
-                ref name,
-                ref attrs,
-                ..
-            } => {
-                let find_attr = |name: LocalName| {
-                    attrs
-                        .borrow()
-                        .iter()
-                        .find(|attr| attr.name.local == name)
-                        .map(|attr| attr.value.clone())
-                };
-
-                if let Some(id) = find_attr(local_name!("id")) {
+            Element { ref name, .. } => {
+                if let Some(id) = child.get_attribute(&local_name!("id")) {
+                    // Check if node is in ignore list (from config)
                     if vars::obfuscation_ignore_nodes().contains(&id.as_ref()) {
+                        // Skip obfuscation
                         continue;
                     }
                 }
 
                 let tag_name = name.local.as_ref();
+                // Check if tag is in ignore list
                 if IGNORE_OBFUSCATION_TAGS.contains(&tag_name) {
-                    continue;
-                } else if tag_name == "meta" {
-                    // 混淆元标签的 content 属性：
-                    // - 如果元标签的 name 是 OBFUSCATION_META_TAGS 之一，则混淆 content 属性
-                    // - 如果元标签的 property 是 OBFUSCATION_META_TAGS 之一，则混淆 content 属性
-                    let update_content = |name_or_property: &str| {
-                        if vars::obfuscation_meta_tags().contains(&name_or_property) {
-                            if let Some(mut content) = find_attr(local_name!("content")) {
-                                attrs.borrow_mut().iter_mut().for_each(|attr| {
-                                    if attr.name.local == local_name!("content") {
-                                        attr.value = obfuscation::obfuscate_text(&mut content);
-                                    }
-                                });
-                            }
-                        }
-                    };
-                    if let Some(meta_name) = find_attr(local_name!("name")) {
-                        update_content(&meta_name);
-                    }
-
-                    if let Some(meta_name) = find_attr(local_name!("property")) {
-                        update_content(&meta_name);
-                    }
-
+                    // Skip obfuscation
                     continue;
                 } else {
-                    obfuscate_content(child.clone());
+                    obfuscate_text(child.clone());
                 }
             }
             markup5ever_rcdom::NodeData::Text { ref contents } => {
                 contents.replace_with(obfuscation::obfuscate_text);
             }
-            _ => obfuscate_content(child.clone()),
+            _ => obfuscate_text(child.clone()),
         }
     }
 }
 
-fn remove_meta_tags(handle: Handle, tags: &Vec<&str>) {
-    let node = handle;
-    let children = node.children.borrow();
-    for child in children.iter() {
-        match child.data {
-            Element { ref name, .. } => {
-                if name.local == local_name!("head") {
-                    child.children.replace_with(|children| {
-                        children.retain(|head_child| match head_child.data {
-                            Element {
-                                ref name,
-                                ref attrs,
-                                ..
-                            } => {
-                                if name.local == local_name!("meta") {
-                                    let find_attr = |name: LocalName| {
-                                        attrs
-                                            .borrow()
-                                            .iter()
-                                            .find(|attr| attr.name.local == name)
-                                            .map(|attr| attr.value.clone())
-                                    };
-                                    let mut is_retain = true;
-                                    if let Some(meta_name) = find_attr(local_name!("name")) {
-                                        if tags.contains(&meta_name.as_ref()) {
-                                            is_retain = false;
-                                        }
-                                    }
+fn obfuscate_meta_content(handle: Handle, include_tags: &[&str]) {
+    for mut meta_tag in handle.find_meta_tags() {
+        let content_locale_name = local_name!("content");
+        let name_locale_name = local_name!("name");
+        let property_locale_name = local_name!("property");
+        if let Some(meta_name) = meta_tag.get_attribute(&name_locale_name) {
+            if include_tags.contains(&meta_name.as_ref()) {
+                if let Some(content) = meta_tag.get_attribute(&content_locale_name) {
+                    meta_tag.set_attribute(
+                        &content_locale_name,
+                        obfuscation::obfuscate_text(&mut content.clone()),
+                    );
+                }
+            }
+        }
+        if let Some(meta_property) = meta_tag.get_attribute(&property_locale_name) {
+            if include_tags.contains(&meta_property.as_ref()) {
+                if let Some(content) = meta_tag.get_attribute(&content_locale_name) {
+                    meta_tag.set_attribute(
+                        &content_locale_name,
+                        obfuscation::obfuscate_text(&mut content.clone()),
+                    );
+                }
+            }
+        }
+    }
+}
 
-                                    if let Some(meta_property) = find_attr(local_name!("property"))
-                                    {
-                                        if tags.contains(&meta_property.as_ref()) {
-                                            is_retain = false;
-                                        }
-                                    }
-
-                                    is_retain
-                                } else {
-                                    true
-                                }
+fn remove_meta_tags(handle: Handle, tags: &[&str]) {
+    if let Some(head) = handle.get_head() {
+        let name_local_name = local_name!("name");
+        let property_local_name = local_name!("property");
+        let meta_local_name = local_name!("meta");
+        head.children.replace_with(|children| {
+            children.retain(|child| match child.data {
+                Element { ref name, .. } => {
+                    if name.local == meta_local_name {
+                        let mut is_retain = true;
+                        if let Some(meta_name) = child.get_attribute(&name_local_name) {
+                            if tags.contains(&meta_name.as_ref()) {
+                                is_retain = false;
                             }
-                            _ => true,
-                        });
+                        }
 
-                        children.to_vec()
-                    });
-                    continue;
-                } else {
-                    remove_meta_tags(child.clone(), tags);
+                        if let Some(meta_property) = child.get_attribute(&property_local_name) {
+                            if tags.contains(&meta_property.as_ref()) {
+                                is_retain = false;
+                            }
+                        }
+
+                        is_retain
+                    } else {
+                        true
+                    }
                 }
-            }
-            _ => remove_meta_tags(child.clone(), tags),
-        }
-    }
-}
+                _ => true,
+            });
 
-fn find_elements(handle: &Handle) -> Vec<Rc<Node>> {
-    let node: &Rc<Node> = handle;
-    let children = node.children.borrow();
-    if let Some(child) = children.iter().next() {
-        match &child.data {
-            Element { ref name, .. } => {
-                if name.local.as_ref() == "html" {
-                    // 将 child.children 转换为 Vec<Rc<Node>>
-                    child.children.borrow().iter().cloned().collect()
-                } else {
-                    find_elements(child)
-                }
-            }
-            _ => find_elements(child),
-        }
-    } else {
-        // 这应该是一个 bug，请将您的补丁内容返回到 GitHub issue 中。
-        // 解析补丁内容 HTML 时没有找到有效元素
-        error!("no valid elements found when parsing patch content HTML");
-
-        vec![Node::new(markup5ever_rcdom::NodeData::Text {
-            contents: RefCell::new("".into()),
-        })]
+            children.to_vec()
+        });
     }
 }
 
