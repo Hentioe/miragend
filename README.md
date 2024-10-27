@@ -1,5 +1,8 @@
 # Miragend
 
+[![.github/workflows/publish.yml](https://github.com/hentioe/miragend/actions/workflows/publish.yml/badge.svg?branch=main)](https://github.com/hentioe/miragend/actions/workflows/publish.yml)
+[![Docker Image Version (tag)](https://img.shields.io/docker/v/hentioe/miragend/0.1.0)](https://hub.docker.com/r/hentioe/miragend/tags)
+
 Miragend 是一个具有对抗能力的通用反向代理，它可以污染 AI 产品及其它类型的恶意爬虫。对于不尊重原创，未经授权的抓取，Miragend 会通过各种策略应对它们。
 
 ## 介绍和使用
