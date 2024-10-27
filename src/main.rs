@@ -79,7 +79,6 @@ async fn handler(request: Request<Body>) -> Response<Body> {
         "patch" => patch_handler(request).await,
         "obfuscation" | "obfus" => obfus_handler(request).await,
         s => {
-            // 无效的策略，回到后备策略
             error!("invalid strategy: {}, fallback to obfuscation", s);
 
             obfus_handler(request).await
@@ -166,7 +165,7 @@ async fn handle(request: Request<Body>, strategy: Strategy<'_>) -> Response<Body
             }
         }
         Loaded::Forward(resp) => {
-            error!("unhandled content-type: {:?}", resp.content_type);
+            error!("unhandled content-type: {}", resp.content_type);
 
             build_resp_with_fallback(StatusCode::INTERNAL_SERVER_ERROR)
         }
@@ -260,7 +259,7 @@ fn obfuscate_doc_text(handle: Handle) {
                 }
             }
             markup5ever_rcdom::NodeData::Text { ref contents } => {
-                contents.replace_with(obfuscation::obfuscate_text);
+                contents.replace_with(|text| text.obfuscated());
             }
             _ => obfuscate_doc_text(child.clone()),
         }
@@ -273,11 +272,8 @@ fn obfuscate_doc_metas(handle: Handle, include_tags: &[&str]) {
         let mut update_content = |attr_name: &LocalName| {
             if let Some(meta_name) = meta_tag.get_attribute(attr_name) {
                 if include_tags.contains(&meta_name.as_ref()) {
-                    if let Some(content) = meta_tag.get_attribute(&content_locale_name) {
-                        meta_tag.set_attribute(
-                            &content_locale_name,
-                            obfuscation::obfuscate_text(&mut content.clone()),
-                        );
+                    if let Some(content) = meta_tag.get_attribute(&content_locale_name).as_mut() {
+                        meta_tag.set_attribute(&content_locale_name, content.obfuscated());
                     }
                 }
             }

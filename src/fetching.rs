@@ -14,7 +14,7 @@ pub struct Response {
     pub body: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, strum::Display)]
 pub enum ContentType {
     Html,
     Json,

@@ -5,12 +5,6 @@ use std::ops::RangeInclusive;
 // 常见汉字范围
 const CHINESE_RANGE: RangeInclusive<char> = '\u{4e00}'..='\u{9fa5}';
 
-// TODO: 以实现 Obfuscator 的方式提供 API
-/// 对输入文本进行混淆，返回混淆后的文本
-pub fn obfuscate_text(text: &mut Tendril<UTF8>) -> Tendril<UTF8> {
-    text.chars().map(random_char).collect()
-}
-
 // 根据输入生成随机字符
 fn random_char(input: char) -> char {
     if CHINESE_RANGE.contains(&input) {
@@ -23,30 +17,77 @@ fn random_char(input: char) -> char {
 }
 
 pub trait Obfuscator {
+    type Output;
+
     fn obfuscate(&mut self);
+    fn obfuscated(&self) -> Self::Output;
 }
 
 impl Obfuscator for serde_json::Map<String, Value> {
+    type Output = Self;
+
     fn obfuscate(&mut self) {
         for (_key, value) in self.iter_mut() {
-            obfuscate_json_value(value);
+            value.obfuscate();
         }
+    }
+
+    fn obfuscated(&self) -> Self::Output {
+        let mut cloned = self.clone();
+        cloned.obfuscate();
+
+        cloned
     }
 }
 
-fn obfuscate_json_value(value: &mut Value) {
-    match value {
-        Value::String(s) => {
-            *s = obfuscate_text(&mut s.clone().into()).into();
-        }
-        Value::Object(map) => {
-            map.obfuscate();
-        }
-        Value::Array(arr) => {
-            for value in arr.iter_mut() {
-                obfuscate_json_value(value);
+impl Obfuscator for Value {
+    type Output = Self;
+
+    fn obfuscate(&mut self) {
+        match self {
+            Value::String(s) => {
+                *s = s.obfuscated();
             }
+            Value::Object(map) => {
+                map.obfuscate();
+            }
+            Value::Array(arr) => {
+                for value in arr.iter_mut() {
+                    value.obfuscate();
+                }
+            }
+            _ => {}
         }
-        _ => {}
+    }
+
+    fn obfuscated(&self) -> Self::Output {
+        let mut cloned = self.clone();
+        cloned.obfuscate();
+
+        cloned
+    }
+}
+
+impl Obfuscator for &mut Tendril<UTF8> {
+    type Output = Tendril<UTF8>;
+
+    fn obfuscate(&mut self) {
+        **self = self.obfuscated();
+    }
+
+    fn obfuscated(&self) -> Self::Output {
+        self.chars().map(random_char).collect()
+    }
+}
+
+impl Obfuscator for &mut String {
+    type Output = String;
+
+    fn obfuscate(&mut self) {
+        **self = self.obfuscated();
+    }
+
+    fn obfuscated(&self) -> Self::Output {
+        self.chars().map(random_char).collect()
     }
 }
