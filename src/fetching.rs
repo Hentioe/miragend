@@ -10,7 +10,14 @@ pub enum Loaded {
 pub struct Response {
     pub status: StatusCode,
     pub headers: HeaderMap,
+    pub content_type: ContentType,
     pub body: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ContentType {
+    Html,
+    Json,
 }
 
 pub async fn load(url: &str, headers: HeaderMap) -> Loaded {
@@ -28,10 +35,20 @@ pub async fn load(url: &str, headers: HeaderMap) -> Loaded {
     };
 
     // 读取 content-type，如果为空或 `text/html`，则返回 body
-    let is_html = match resp.headers().get("content-type") {
-        None => true,
+    let content_type = match resp.headers().get("content-type") {
+        None => ContentType::Html,
         Some(header) => match header.to_str() {
-            Ok(value) => value.starts_with("text/html"),
+            Ok(value) => {
+                if value.starts_with("text/html") {
+                    ContentType::Html
+                } else if value.starts_with("application/json") {
+                    ContentType::Json
+                } else {
+                    error!("unsupported content-type: {}", value);
+
+                    return Loaded::Special(StatusCode::BAD_GATEWAY);
+                }
+            }
             Err(e) => {
                 error!("illegal content-type: {}", e);
 
@@ -40,26 +57,21 @@ pub async fn load(url: &str, headers: HeaderMap) -> Loaded {
         },
     };
 
-    if is_html {
-        let status = resp.status();
-        let headers = resp.headers().clone();
-        let body = match resp.text().await {
-            Ok(body) => body,
-            Err(e) => {
-                // 读取响应体失败
-                error!("failed to read response body: {}", e);
+    let status = resp.status();
+    let headers = resp.headers().clone();
+    let body = match resp.text().await {
+        Ok(body) => body,
+        Err(e) => {
+            // 读取响应体失败
+            error!("failed to read response body: {}", e);
 
-                return Loaded::Special(StatusCode::BAD_GATEWAY);
-            }
-        };
-        Loaded::Forward(Response {
-            status,
-            headers,
-            body,
-        })
-    } else {
-        error!("response content-type is not supported");
-
-        Loaded::Special(StatusCode::BAD_GATEWAY)
-    }
+            return Loaded::Special(StatusCode::BAD_GATEWAY);
+        }
+    };
+    Loaded::Forward(Response {
+        status,
+        headers,
+        content_type,
+        body,
+    })
 }

@@ -10,6 +10,7 @@ use http::{Response, StatusCode, Uri};
 use log::{error, info, warn};
 use markup5ever::local_name;
 use markup5ever_rcdom::{Handle, Node, NodeData::Element};
+use obfuscation::Obfuscator;
 use std::path::Path;
 use std::rc::Rc;
 use tokio::signal;
@@ -23,16 +24,16 @@ mod request;
 mod special_response;
 mod vars;
 
-// 后备补丁内容
+// Fallback patch contents
 const FALLBACK_PATCH_MARKDOWN: &str = include_str!("../patch-content.md");
 const FALLBACK_PATCH_HTML: &str = include_str!("../patch-content.html");
-// 忽略混淆文本的标签
+// Ignore obfuscation for these tags
 const IGNORE_OBFUSCATION_TAGS: [&str; 5] = ["script", "noscript", "style", "template", "iframe"];
-// 策略
+// Strategy configuration
 enum Strategy<'a> {
-    // 补丁
+    // Patch
     Patch(PatchConfig<'a>),
-    // 混淆
+    // Obfuscation
     Obfuscation,
 }
 
@@ -103,51 +104,85 @@ async fn patch_handler(request: Request<Body>) -> Response<Body> {
 }
 
 async fn handle(request: Request<Body>, strategy: Strategy<'_>) -> Response<Body> {
+    use fetching::ContentType::*;
+    use special_response::build_resp_with_fallback;
+
     let path = request.uri();
     let url = &format!("{}{}", vars::upstream_base_url(), path);
     let headers = headers::build_from_request(request.headers());
+    let build_resp = |resp: &fetching::Response, body: String| {
+        Response::builder()
+            .status(resp.status)
+            .append_headers(&resp.headers)
+            .body(Body::new(body))
+            .context("failed to create response")
+    };
 
     match fetching::load(url, headers).await {
-        Loaded::Forward(resp) => match patch_page(&resp.body, &strategy).await {
-            Ok(html) => {
-                route_log(resp.status, path, url);
+        Loaded::Forward(resp) if resp.content_type == Html => {
+            match handle_page(&resp.body, &strategy).await {
+                Ok(html) => match build_resp(&resp, html) {
+                    Ok(resp) => {
+                        route_log(&resp.status(), path, url);
 
-                match Response::builder()
-                    .status(resp.status)
-                    .append_headers(&resp.headers)
-                    .body(Body::new(html))
-                    .context("failed to create response")
-                {
-                    Ok(resp) => resp,
-                    Err(e) => {
-                        error!("{}", e);
-                        special_response::build_resp_with_fallback(
-                            StatusCode::INTERNAL_SERVER_ERROR,
-                        )
+                        resp
                     }
+                    Err(e) => {
+                        route_log(&StatusCode::INTERNAL_SERVER_ERROR, path, url);
+
+                        error!("{}", e);
+                        build_resp_with_fallback(StatusCode::INTERNAL_SERVER_ERROR)
+                    }
+                },
+                Err(e) => {
+                    route_log(&StatusCode::INTERNAL_SERVER_ERROR, path, url);
+                    error!("{}", e);
+
+                    build_resp_with_fallback(StatusCode::INTERNAL_SERVER_ERROR)
                 }
             }
-            Err(e) => {
-                route_log(StatusCode::INTERNAL_SERVER_ERROR, path, url);
-                error!("{}", e);
+        }
+        Loaded::Forward(resp) if resp.content_type == Json => {
+            match handle_json(&resp.body, &strategy) {
+                Ok(json) => match build_resp(&resp, json) {
+                    Ok(resp) => {
+                        route_log(&resp.status(), path, url);
 
-                special_response::build_resp_with_fallback(StatusCode::INTERNAL_SERVER_ERROR)
+                        resp
+                    }
+                    Err(e) => {
+                        route_log(&StatusCode::INTERNAL_SERVER_ERROR, path, url);
+
+                        error!("{}", e);
+                        build_resp_with_fallback(StatusCode::INTERNAL_SERVER_ERROR)
+                    }
+                },
+                Err(e) => {
+                    route_log(&StatusCode::INTERNAL_SERVER_ERROR, path, url);
+
+                    error!("{}", e);
+                    build_resp_with_fallback(StatusCode::INTERNAL_SERVER_ERROR)
+                }
             }
-        },
+        }
+        Loaded::Forward(resp) => {
+            error!("unhandled content-type: {:?}", resp.content_type);
 
+            build_resp_with_fallback(StatusCode::INTERNAL_SERVER_ERROR)
+        }
         Loaded::Special(status_code) => {
-            route_log(status_code, path, url);
+            route_log(&status_code, path, url);
 
-            special_response::build_resp_with_fallback(status_code)
+            build_resp_with_fallback(status_code)
         }
     }
 }
 
-fn route_log(status_code: StatusCode, path: &Uri, url: &str) {
+fn route_log(status_code: &StatusCode, path: &Uri, url: &str) {
     info!("{} \"{}\" => \"{}\"", status_code, path, url);
 }
 
-async fn patch_page<'a>(html: &str, strategy: &'a Strategy<'_>) -> anyhow::Result<String> {
+async fn handle_page<'a>(html: &str, strategy: &'a Strategy<'_>) -> anyhow::Result<String> {
     let dom = html.build_document().context("failed to parse document")?;
 
     let _extending_lifecycle = match strategy {
@@ -161,19 +196,32 @@ async fn patch_page<'a>(html: &str, strategy: &'a Strategy<'_>) -> anyhow::Resul
             for node in config.remove_nodes {
                 remove_children(dom.document.clone(), node);
             }
-            remove_meta_tags(dom.document.clone(), config.remove_meta_tags);
+            remove_doc_metas(dom.document.clone(), config.remove_meta_tags);
 
             Some(fragment_dom)
         }
         Strategy::Obfuscation => {
-            obfuscate_text(dom.document.clone());
-            obfuscate_meta_content(dom.document.clone(), vars::obfuscation_meta_tags());
+            obfuscate_doc_text(dom.document.clone());
+            obfuscate_doc_metas(dom.document.clone(), vars::obfuscation_meta_tags());
 
             None
         }
     };
 
     html_ops::serialize_to_html(dom).context("failed to serialize document")
+}
+
+fn handle_json(json: &str, strategy: &Strategy<'_>) -> anyhow::Result<String> {
+    let mut map: serde_json::Map<String, serde_json::Value> =
+        serde_json::from_str(json).context("failed to parse JSON")?;
+    match strategy {
+        Strategy::Patch(_) => Ok(json.to_owned()),
+        Strategy::Obfuscation => {
+            map.obfuscate();
+
+            serde_json::to_string(&map).context("failed to serialize JSON")
+        }
+    }
 }
 
 fn replace_children(handle: Handle, node_id: &str, new_children: Vec<Rc<Node>>) {
@@ -188,7 +236,7 @@ fn remove_children(handle: Handle, node_id: &str) {
     replace_children(handle, node_id, vec![])
 }
 
-fn obfuscate_text(handle: Handle) {
+fn obfuscate_doc_text(handle: Handle) {
     let node = handle;
     let children = node.children.borrow();
     for child in children.iter() {
@@ -208,18 +256,18 @@ fn obfuscate_text(handle: Handle) {
                     // Skip obfuscation
                     continue;
                 } else {
-                    obfuscate_text(child.clone());
+                    obfuscate_doc_text(child.clone());
                 }
             }
             markup5ever_rcdom::NodeData::Text { ref contents } => {
                 contents.replace_with(obfuscation::obfuscate_text);
             }
-            _ => obfuscate_text(child.clone()),
+            _ => obfuscate_doc_text(child.clone()),
         }
     }
 }
 
-fn obfuscate_meta_content(handle: Handle, include_tags: &[&str]) {
+fn obfuscate_doc_metas(handle: Handle, include_tags: &[&str]) {
     for mut meta_tag in handle.find_meta_tags() {
         let content_locale_name = local_name!("content");
         let mut update_content = |attr_name: &LocalName| {
@@ -239,7 +287,7 @@ fn obfuscate_meta_content(handle: Handle, include_tags: &[&str]) {
     }
 }
 
-fn remove_meta_tags(handle: Handle, tags: &[&str]) {
+fn remove_doc_metas(handle: Handle, tags: &[&str]) {
     if let Some(head) = handle.get_head() {
         let name_local_name = local_name!("name");
         let property_local_name = local_name!("property");
