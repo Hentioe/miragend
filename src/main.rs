@@ -1,12 +1,12 @@
 use anyhow::Context;
 use axum::body::Body;
-use axum::response::Response;
 use axum::{http::Request, routing::get, Router};
 use clap::Parser;
 use fetching::Loaded;
 use headers::AppendHeaders;
+use html5ever::LocalName;
 use html_ops::{DOMBuilder, DOMOps, NodeOps};
-use http::{StatusCode, Uri};
+use http::{Response, StatusCode, Uri};
 use log::{error, info, warn};
 use markup5ever::local_name;
 use markup5ever_rcdom::{Handle, Node, NodeData::Element};
@@ -51,7 +51,6 @@ async fn main() -> anyhow::Result<()> {
     }
     validate_config()?;
     let _args = cli::Args::parse();
-
     let app = Router::new().route("/*path", get(handler));
     let bind = vars::bind();
     let listener = tokio::net::TcpListener::bind(bind)
@@ -75,28 +74,39 @@ fn validate_config() -> anyhow::Result<()> {
 }
 
 async fn handler(request: Request<Body>) -> Response<Body> {
-    let path = request.uri();
-    let url = &format!("{}{}", vars::upstream_base_url(), path);
-    let strategy = match vars::strategy() {
-        "patch" => {
-            let patch_html = load_patch_html(vars::patch_content_file());
-            let config = PatchConfig {
-                target: vars::patch_target().to_owned(),
-                content: patch_html,
-                remove_nodes: vars::patch_remove_nodes(),
-                remove_meta_tags: vars::patch_remove_meta_tags(),
-            };
-            Strategy::Patch(config)
-        }
-        "obfuscation" | "obfus" => Strategy::Obfuscation,
+    match vars::strategy() {
+        "patch" => patch_handler(request).await,
+        "obfuscation" | "obfus" => obfus_handler(request).await,
         s => {
             // 无效的策略，回到后备策略
-            error!("invalid strategy: `{}`, fallback strategy", s);
-            Strategy::Obfuscation
+            error!("invalid strategy: {}, fallback to obfuscation", s);
+
+            obfus_handler(request).await
         }
+    }
+}
+
+async fn obfus_handler(request: Request<Body>) -> Response<Body> {
+    handle(request, Strategy::Obfuscation).await
+}
+
+async fn patch_handler(request: Request<Body>) -> Response<Body> {
+    let patch_html = load_patch_html(vars::patch_content_file());
+    let config = PatchConfig {
+        target: vars::patch_target().to_owned(),
+        content: patch_html,
+        remove_nodes: vars::patch_remove_nodes(),
+        remove_meta_tags: vars::patch_remove_meta_tags(),
     };
 
+    handle(request, Strategy::Patch(config)).await
+}
+
+async fn handle(request: Request<Body>, strategy: Strategy<'_>) -> Response<Body> {
+    let path = request.uri();
+    let url = &format!("{}{}", vars::upstream_base_url(), path);
     let headers = headers::build_from_request(request.headers());
+
     match fetching::load(url, headers).await {
         Loaded::Forward(resp) => match patch_page(&resp.body, &strategy).await {
             Ok(html) => {
@@ -212,28 +222,20 @@ fn obfuscate_text(handle: Handle) {
 fn obfuscate_meta_content(handle: Handle, include_tags: &[&str]) {
     for mut meta_tag in handle.find_meta_tags() {
         let content_locale_name = local_name!("content");
-        let name_locale_name = local_name!("name");
-        let property_locale_name = local_name!("property");
-        if let Some(meta_name) = meta_tag.get_attribute(&name_locale_name) {
-            if include_tags.contains(&meta_name.as_ref()) {
-                if let Some(content) = meta_tag.get_attribute(&content_locale_name) {
-                    meta_tag.set_attribute(
-                        &content_locale_name,
-                        obfuscation::obfuscate_text(&mut content.clone()),
-                    );
+        let mut update_content = |attr_name: &LocalName| {
+            if let Some(meta_name) = meta_tag.get_attribute(attr_name) {
+                if include_tags.contains(&meta_name.as_ref()) {
+                    if let Some(content) = meta_tag.get_attribute(&content_locale_name) {
+                        meta_tag.set_attribute(
+                            &content_locale_name,
+                            obfuscation::obfuscate_text(&mut content.clone()),
+                        );
+                    }
                 }
             }
-        }
-        if let Some(meta_property) = meta_tag.get_attribute(&property_locale_name) {
-            if include_tags.contains(&meta_property.as_ref()) {
-                if let Some(content) = meta_tag.get_attribute(&content_locale_name) {
-                    meta_tag.set_attribute(
-                        &content_locale_name,
-                        obfuscation::obfuscate_text(&mut content.clone()),
-                    );
-                }
-            }
-        }
+        };
+        update_content(&local_name!("name"));
+        update_content(&local_name!("property"));
     }
 }
 
