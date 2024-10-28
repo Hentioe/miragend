@@ -3,6 +3,7 @@ name: Publish
 on:
   push:
     branches: ["main"]
+    tags: ["v*"]
 
 permissions:
   contents: read
@@ -26,6 +27,8 @@ jobs:
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - name: Docker meta
         id: meta
         uses: docker/metadata-action@v5
@@ -33,8 +36,7 @@ jobs:
           images: |
             hentioe/miragend
           tags: |
-            type=ref,event=branch,pattern=main,tag=latest
-            type=ref,event=branch
+            type=raw,value=latest,enable=${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=semver,pattern={{major}}
