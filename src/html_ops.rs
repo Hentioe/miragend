@@ -2,10 +2,10 @@ use anyhow::Context;
 use html5ever::{
     local_name, namespace_url, ns, parse_document, parse_fragment, serialize,
     tendril::{fmt::UTF8, Tendril, TendrilSink},
-    LocalName, QualName,
+    Attribute, LocalName, QualName,
 };
 use markup5ever_rcdom::{Handle, Node, NodeData::Element, RcDom, SerializableHandle};
-use std::rc::Rc;
+use std::{cell::RefCell, rc::Rc};
 
 pub trait DOMBuilder {
     fn build_document(self) -> Result<RcDom, std::io::Error>;
@@ -137,6 +137,25 @@ pub fn extract_contents(handle: &Handle) -> Vec<Rc<Node>> {
     } else {
         vec![]
     }
+}
+
+// todo: 转换为通用函数生成，此 API 作为快捷方式。
+pub fn build_script(url: Tendril<UTF8>) -> Rc<Node> {
+    Node::new(Element {
+        name: QualName::new(None, ns!(html), local_name!("script")),
+        attrs: RefCell::new(vec![Attribute {
+            name: QualName::new(None, ns!(), local_name!("src")),
+            value: url,
+        }]),
+        template_contents: RefCell::new(None),
+        mathml_annotation_xml_integration_point: false,
+    })
+}
+
+pub fn build_newline() -> Rc<Node> {
+    Node::new(markup5ever_rcdom::NodeData::Text {
+        contents: RefCell::new("\n".into()),
+    })
 }
 
 pub fn serialize_to_html(dom: RcDom) -> anyhow::Result<String> {

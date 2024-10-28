@@ -207,6 +207,11 @@ async fn handle_page<'a>(html: &str, strategy: &'a Strategy<'_>) -> anyhow::Resu
         }
     };
 
+    let inject_script = vars::inject_online_script();
+    if !inject_script.is_empty() {
+        inject_online_script(dom.document.clone(), inject_script);
+    }
+
     html_ops::serialize_to_html(dom).context("failed to serialize document")
 }
 
@@ -315,6 +320,15 @@ fn remove_doc_metas(handle: Handle, tags: &[&str]) {
 
             children.to_vec()
         });
+    }
+}
+
+fn inject_online_script(handle: Handle, url: &str) {
+    if let Some(head) = handle.get_head() {
+        // 创建一个 script 节点
+        let mut head_children = head.children.borrow_mut();
+        head_children.push(html_ops::build_script(url.into()));
+        head_children.push(html_ops::build_newline());
     }
 }
 

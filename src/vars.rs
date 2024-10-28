@@ -76,6 +76,9 @@ static SPECIAL_PAGE_STYLE: LazyLock<special_response::Style> =
         }
     });
 
+static INJECT_ONLINE_SCRIPT: LazyLock<String> =
+    LazyLock::new(|| std::env::var("MIRAGEND_INJECT_ONLINE_SCRIPT").unwrap_or_default());
+
 pub const CONTENT_TYPE_VALUE_TEXT_HTML: &str = "text/html; charset=utf-8";
 
 // Call on startup to avoid runtime initialization errors
@@ -130,4 +133,8 @@ pub fn connect_timeout_secs() -> u64 {
 
 pub fn special_page_style() -> special_response::Style {
     *SPECIAL_PAGE_STYLE
+}
+
+pub fn inject_online_script() -> &'static str {
+    &INJECT_ONLINE_SCRIPT
 }
