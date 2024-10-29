@@ -1,5 +1,6 @@
 use crate::special_response;
 use http::HeaderValue;
+use log::warn;
 use std::sync::LazyLock;
 
 static BIND: LazyLock<String> =
@@ -58,6 +59,18 @@ static OBFUSCATION_IGNORE_NDOES: LazyLock<Vec<&'static str>> = LazyLock::new(|| 
         .map(|s| Box::leak(s.to_owned().into_boxed_str()) as &'static str)
         .collect()
 });
+static OBFUSCATION_IGNORE_TITLE: LazyLock<bool> = LazyLock::new(|| {
+    if let Ok(v) = std::env::var("MIRAGEND_OBFUSCATION_IGNORE_TITLE") {
+        if ["true", "false"].contains(&v.as_str()) {
+            v == "true"
+        } else {
+            warn!("invalid value for `MIRAGEND_OBFUSCATION_IGNORE_TITLE`, expected `true` or `false`, got `{}`", v);
+            false
+        }
+    } else {
+        false
+    }
+});
 const DEFAULT_TIMEOUT_SECS: u64 = 60;
 static CONNECT_TIMEOUT_SECS: LazyLock<u64> = LazyLock::new(|| {
     std::env::var("MIRAGEND_CONNECT_TIMEOUT_SECS")
@@ -85,6 +98,7 @@ pub const CONTENT_TYPE_VALUE_TEXT_HTML: &str = "text/html; charset=utf-8";
 pub fn force_init() {
     LazyLock::force(&UPSTREAM_BASE_URL);
     LazyLock::force(&UPSTREAM_DOAMIN);
+    LazyLock::force(&OBFUSCATION_IGNORE_TITLE);
 }
 
 pub fn bind() -> &'static str {
@@ -125,6 +139,10 @@ pub fn obfuscation_meta_tags() -> &'static Vec<&'static str> {
 
 pub fn obfuscation_ignore_nodes() -> &'static Vec<&'static str> {
     &OBFUSCATION_IGNORE_NDOES
+}
+
+pub fn obfuscation_ignore_title() -> bool {
+    *OBFUSCATION_IGNORE_TITLE
 }
 
 pub fn connect_timeout_secs() -> u64 {

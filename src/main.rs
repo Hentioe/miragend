@@ -200,7 +200,7 @@ async fn handle_page<'a>(html: &str, strategy: &'a Strategy<'_>) -> anyhow::Resu
             Some(fragment_dom)
         }
         Strategy::Obfuscation => {
-            obfuscate_doc_text(dom.document.clone());
+            obfuscate_doc_text(dom.document.clone(), false);
             obfuscate_doc_metas(dom.document.clone(), vars::obfuscation_meta_tags());
 
             None
@@ -240,9 +240,8 @@ fn remove_children(handle: Handle, node_id: &str) {
     replace_children(handle, node_id, vec![])
 }
 
-fn obfuscate_doc_text(handle: Handle) {
-    let node = handle;
-    let children = node.children.borrow();
+fn obfuscate_doc_text(handle: Handle, mut title_found: bool) {
+    let children = handle.children.borrow();
     for child in children.iter() {
         match child.data {
             Element { ref name, .. } => {
@@ -260,13 +259,22 @@ fn obfuscate_doc_text(handle: Handle) {
                     // Skip obfuscation
                     continue;
                 } else {
-                    obfuscate_doc_text(child.clone());
+                    obfuscate_doc_text(child.clone(), title_found);
                 }
             }
             markup5ever_rcdom::NodeData::Text { ref contents } => {
-                contents.replace_with(|text| text.obfuscated());
+                let parent_is_title = || match handle.data {
+                    Element { ref name, .. } => name.local == local_name!("title"),
+                    _ => false,
+                };
+                if !title_found && vars::obfuscation_ignore_title() && parent_is_title() {
+                    // No obfuscation for title
+                    title_found = true;
+                } else {
+                    contents.replace_with(|text| text.obfuscated());
+                }
             }
-            _ => obfuscate_doc_text(child.clone()),
+            _ => obfuscate_doc_text(child.clone(), title_found),
         }
     }
 }
