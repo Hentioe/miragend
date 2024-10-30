@@ -91,3 +91,15 @@ impl Obfuscator for &mut String {
         self.chars().map(random_char).collect()
     }
 }
+
+impl Obfuscator for str {
+    type Output = String;
+
+    fn obfuscate(&mut self) {
+        todo!()
+    }
+
+    fn obfuscated(&self) -> Self::Output {
+        self.chars().map(random_char).collect()
+    }
+}

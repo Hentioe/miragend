@@ -71,6 +71,14 @@ static OBFUSCATION_IGNORE_TITLE: LazyLock<bool> = LazyLock::new(|| {
         false
     }
 });
+static OBFUSCATION_IGNORE_AFTER_NODE: LazyLock<String> =
+    LazyLock::new(|| std::env::var("MIRAGEND_OBFUSCATION_IGNORE_AFTER_NODE").unwrap_or_default());
+static OBFUSCATION_IGNORE_LEN: LazyLock<usize> = LazyLock::new(|| {
+    std::env::var("MIRAGEND_OBFUSCATION_IGNORE_LEN")
+        .unwrap_or("0".to_owned())
+        .parse()
+        .unwrap_or(0)
+});
 const DEFAULT_TIMEOUT_SECS: u64 = 60;
 static CONNECT_TIMEOUT_SECS: LazyLock<u64> = LazyLock::new(|| {
     std::env::var("MIRAGEND_CONNECT_TIMEOUT_SECS")
@@ -88,7 +96,6 @@ static SPECIAL_PAGE_STYLE: LazyLock<special_response::Style> =
             _ => special_response::Style::None,
         }
     });
-
 static INJECT_ONLINE_SCRIPT: LazyLock<String> =
     LazyLock::new(|| std::env::var("MIRAGEND_INJECT_ONLINE_SCRIPT").unwrap_or_default());
 
@@ -143,6 +150,14 @@ pub fn obfuscation_ignore_nodes() -> &'static Vec<&'static str> {
 
 pub fn obfuscation_ignore_title() -> bool {
     *OBFUSCATION_IGNORE_TITLE
+}
+
+pub fn obfuscation_ignore_after_node() -> &'static str {
+    &OBFUSCATION_IGNORE_AFTER_NODE
+}
+
+pub fn obfuscation_ignore_len() -> usize {
+    *OBFUSCATION_IGNORE_LEN
 }
 
 pub fn connect_timeout_secs() -> u64 {

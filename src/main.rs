@@ -200,7 +200,7 @@ async fn handle_page<'a>(html: &str, strategy: &'a Strategy<'_>) -> anyhow::Resu
             Some(fragment_dom)
         }
         Strategy::Obfuscation => {
-            obfuscate_doc_text(dom.document.clone(), false);
+            obfuscate_doc_text(dom.document.clone(), vars::obfuscation_ignore_len());
             obfuscate_doc_metas(dom.document.clone(), vars::obfuscation_meta_tags());
 
             None
@@ -240,16 +240,91 @@ fn remove_children(handle: Handle, node_id: &str) {
     replace_children(handle, node_id, vec![])
 }
 
-fn obfuscate_doc_text(handle: Handle, mut title_found: bool) {
+fn obfuscate_doc_text(handle: Handle, mut ignore_remaining: usize) {
+    let mut text_nodes: Vec<(Rc<Node>, bool)> = vec![];
+    collect_obfuscation_nodes(&handle, &mut text_nodes, false, false);
+    // let children = handle.children.borrow();
+    for (child, after_content) in text_nodes {
+        if let markup5ever_rcdom::NodeData::Text { ref contents } = child.data {
+            contents.replace_with(|text| {
+                if !after_content || ignore_remaining == 0 || text.trim().is_empty() {
+                    text.obfuscated()
+                } else {
+                    // TODO: 改进空格问题，逐字符替换自动更新余量。
+                    let (head_space, content, tail_space) = split_node_text(text);
+                    let chars_count = text.chars().count() - count_whitespace(text);
+                    if ignore_remaining > chars_count {
+                        // Check if the remaining is greater than the number of characters
+                        ignore_remaining -= chars_count;
+                        text.clone()
+                    } else if ignore_remaining > 0 {
+                        // If there is still a surplus, only replace the surplus part
+                        ignore_remaining = 0;
+                        let (ignore, remain) = content.split_at(ignore_remaining);
+                        format!(
+                            "{}{}{}{}",
+                            head_space,
+                            ignore,
+                            remain.obfuscated(),
+                            tail_space
+                        )
+                        .into()
+                    } else {
+                        text.obfuscated()
+                    }
+                }
+            });
+        }
+    }
+}
+
+fn count_whitespace(s: &str) -> usize {
+    s.chars().filter(|c| c.is_whitespace()).count()
+}
+
+fn split_node_text(input: &str) -> (String, String, String) {
+    let head_space_len = input.len() - input.trim_start().len();
+    let tail_space_len = input.len() - input.trim_end().len();
+
+    let head_space = input[..head_space_len].to_string();
+    let content = input[head_space_len..input.len() - tail_space_len].to_string();
+    let tail_space = input[input.len() - tail_space_len..].to_string();
+
+    (head_space, content, tail_space)
+}
+
+fn collect_obfuscation_nodes(
+    handle: &Handle,
+    text_nodes: &mut Vec<(Handle, bool)>,
+    mut title_found: bool,
+    mut after_content: bool,
+) {
     let children = handle.children.borrow();
     for child in children.iter() {
         match child.data {
-            Element { ref name, .. } => {
+            markup5ever_rcdom::NodeData::Text { .. } => {
+                let parent_is_title = || match handle.data {
+                    Element { ref name, .. } => name.local == local_name!("title"),
+                    _ => false,
+                };
+                if !title_found && vars::obfuscation_ignore_title() && parent_is_title() {
+                    // No obfuscation for title
+                    title_found = true;
+                } else {
+                    text_nodes.push((child.clone(), after_content));
+                }
+            }
+            markup5ever_rcdom::NodeData::Element { ref name, .. } => {
                 if let Some(id) = child.get_attribute(&local_name!("id")) {
                     // Check if node is in ignore list (from config)
                     if vars::obfuscation_ignore_nodes().contains(&id.as_ref()) {
                         // Skip obfuscation
                         continue;
+                    }
+
+                    // TODO: 提取此处的 obfuscation_ignore_after_node 作为参数
+                    if id.as_ref() == vars::obfuscation_ignore_after_node() {
+                        after_content = true;
                     }
                 }
 
@@ -259,22 +334,10 @@ fn obfuscate_doc_text(handle: Handle, mut title_found: bool) {
                     // Skip obfuscation
                     continue;
                 } else {
-                    obfuscate_doc_text(child.clone(), title_found);
+                    collect_obfuscation_nodes(child, text_nodes, title_found, after_content)
                 }
             }
-            markup5ever_rcdom::NodeData::Text { ref contents } => {
-                let parent_is_title = || match handle.data {
-                    Element { ref name, .. } => name.local == local_name!("title"),
-                    _ => false,
-                };
-                if !title_found && vars::obfuscation_ignore_title() && parent_is_title() {
-                    // No obfuscation for title
-                    title_found = true;
-                } else {
-                    contents.replace_with(|text| text.obfuscated());
-                }
-            }
-            _ => obfuscate_doc_text(child.clone(), title_found),
+            _ => {}
         }
     }
 }
