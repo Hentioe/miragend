@@ -1,0 +1,4 @@
+source_start,source_end,target_start,target_end,comment
+4e00,9fff,3400,4dbf,"from common Chinese characters to rare Chinese characters"
+0061,007a,0061,007a,"from lowercase English letters to lowercase English letters"
+0041,005A,0041,005A,"from uppercase English letters to uppercase English letters"

@@ -230,7 +230,7 @@ fn handle_json(json: &str, strategy: &Strategy<'_>) -> anyhow::Result<String> {
     match strategy {
         Strategy::Patch(_) => Ok(json.to_owned()),
         Strategy::Obfuscation => {
-            map.obfuscate();
+            map.obfuscate(vars::obfuscator_config());
 
             serde_json::to_string(&map).context("failed to serialize JSON")
         }
@@ -257,7 +257,7 @@ fn obfuscate_doc_text(handle: Handle, mut ignore_remaining: usize) {
         if let markup5ever_rcdom::NodeData::Text { ref contents } = child.data {
             contents.replace_with(|text| {
                 if !after_content || ignore_remaining == 0 {
-                    text.obfuscated()
+                    text.obfuscated(vars::obfuscator_config())
                 } else {
                     let (content, remaining) =
                         obfuscated_with_remaining(text.chars(), ignore_remaining);
@@ -279,7 +279,7 @@ fn obfuscated_with_remaining(chars: Chars<'_>, mut ignore_remaining: usize) -> (
 
             c
         } else {
-            c.obfuscated()
+            c.obfuscated(vars::obfuscator_config())
         };
 
         parts.push(c);
@@ -344,7 +344,10 @@ fn obfuscate_doc_metas(handle: Handle, include_tags: &[&str]) {
             if let Some(meta_name) = meta_tag.get_attribute(attr_name) {
                 if include_tags.contains(&meta_name.as_ref()) {
                     if let Some(content) = meta_tag.get_attribute(&content_locale_name).as_mut() {
-                        meta_tag.set_attribute(&content_locale_name, content.obfuscated());
+                        meta_tag.set_attribute(
+                            &content_locale_name,
+                            content.obfuscated(vars::obfuscator_config()),
+                        );
                     }
                 }
             }

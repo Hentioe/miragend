@@ -1,7 +1,7 @@
-use crate::special_response;
+use crate::{obfuscation::ObfuscatorConfig, special_response};
 use http::HeaderValue;
 use log::warn;
-use std::sync::LazyLock;
+use std::{fs, path::PathBuf, sync::LazyLock};
 
 static BIND: LazyLock<String> =
     LazyLock::new(|| std::env::var("MIRAGEND_BIND").unwrap_or("0.0.0.0:8080".to_owned()));
@@ -79,6 +79,8 @@ static OBFUSCATION_IGNORE_LEN: LazyLock<usize> = LazyLock::new(|| {
         .parse()
         .unwrap_or(0)
 });
+static OBFUSCATION_MAPPING_FILE: LazyLock<String> =
+    LazyLock::new(|| std::env::var("MIRAGEND_OBFUSCATION_MAPPING_FILE").unwrap_or_default());
 const DEFAULT_TIMEOUT_SECS: u64 = 60;
 static CONNECT_TIMEOUT_SECS: LazyLock<u64> = LazyLock::new(|| {
     std::env::var("MIRAGEND_CONNECT_TIMEOUT_SECS")
@@ -98,13 +100,24 @@ static SPECIAL_PAGE_STYLE: LazyLock<special_response::Style> =
     });
 static INJECT_ONLINE_SCRIPT: LazyLock<String> =
     LazyLock::new(|| std::env::var("MIRAGEND_INJECT_ONLINE_SCRIPT").unwrap_or_default());
-
+static OBFUSCATOR_CONFIG: LazyLock<ObfuscatorConfig> = LazyLock::new(|| {
+    let csv_content = if OBFUSCATION_MAPPING_FILE.is_empty()
+        || !PathBuf::from(&*OBFUSCATION_MAPPING_FILE).exists()
+    {
+        include_str!("../obfuscation_mapping.csv")
+    } else {
+        &fs::read_to_string(&*OBFUSCATION_MAPPING_FILE)
+            .expect("failed to read obfuscator mapping file")
+    };
+    ObfuscatorConfig::load_from_csv(csv_content)
+});
 pub const CONTENT_TYPE_VALUE_TEXT_HTML: &str = "text/html; charset=utf-8";
 
 // Call on startup to avoid runtime initialization errors
 pub fn force_init() {
     LazyLock::force(&UPSTREAM_BASE_URL);
     LazyLock::force(&UPSTREAM_DOAMIN);
+    LazyLock::force(&OBFUSCATOR_CONFIG);
     LazyLock::force(&OBFUSCATION_IGNORE_TITLE);
 }
 
@@ -158,6 +171,10 @@ pub fn obfuscation_ignore_after_node() -> &'static str {
 
 pub fn obfuscation_ignore_len() -> usize {
     *OBFUSCATION_IGNORE_LEN
+}
+
+pub fn obfuscator_config() -> &'static ObfuscatorConfig {
+    &OBFUSCATOR_CONFIG
 }
 
 pub fn connect_timeout_secs() -> u64 {
