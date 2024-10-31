@@ -6,7 +6,7 @@ use fetching::Loaded;
 use headers::AppendHeaders;
 use html5ever::LocalName;
 use html_ops::{DOMBuilder, DOMOps, NodeOps};
-use http::{Response, StatusCode, Uri};
+use http::{header, HeaderMap, Response, StatusCode, Uri};
 use log::{error, info, warn};
 use markup5ever::local_name;
 use markup5ever_rcdom::{Handle, Node, NodeData::Element};
@@ -118,24 +118,24 @@ async fn handle(request: Request<Body>, strategy: Strategy<'_>) -> Response<Body
             .context("failed to create response")
     };
 
-    match fetching::load(url, headers).await {
+    match fetching::load(url, headers.clone()).await {
         Loaded::Forward(resp) if resp.content_type == Html => {
             match handle_page(&resp.body, &strategy).await {
                 Ok(html) => match build_resp(&resp, html) {
                     Ok(resp) => {
-                        route_log(&resp.status(), path, url);
+                        route_log(&resp.status(), path, url, &headers);
 
                         resp
                     }
                     Err(e) => {
-                        route_log(&StatusCode::INTERNAL_SERVER_ERROR, path, url);
+                        route_log(&StatusCode::INTERNAL_SERVER_ERROR, path, url, &headers);
 
                         error!("{}", e);
                         build_resp_with_fallback(StatusCode::INTERNAL_SERVER_ERROR)
                     }
                 },
                 Err(e) => {
-                    route_log(&StatusCode::INTERNAL_SERVER_ERROR, path, url);
+                    route_log(&StatusCode::INTERNAL_SERVER_ERROR, path, url, &headers);
                     error!("{}", e);
 
                     build_resp_with_fallback(StatusCode::INTERNAL_SERVER_ERROR)
@@ -146,19 +146,19 @@ async fn handle(request: Request<Body>, strategy: Strategy<'_>) -> Response<Body
             match handle_json(&resp.body, &strategy) {
                 Ok(json) => match build_resp(&resp, json) {
                     Ok(resp) => {
-                        route_log(&resp.status(), path, url);
+                        route_log(&resp.status(), path, url, &headers);
 
                         resp
                     }
                     Err(e) => {
-                        route_log(&StatusCode::INTERNAL_SERVER_ERROR, path, url);
+                        route_log(&StatusCode::INTERNAL_SERVER_ERROR, path, url, &headers);
 
                         error!("{}", e);
                         build_resp_with_fallback(StatusCode::INTERNAL_SERVER_ERROR)
                     }
                 },
                 Err(e) => {
-                    route_log(&StatusCode::INTERNAL_SERVER_ERROR, path, url);
+                    route_log(&StatusCode::INTERNAL_SERVER_ERROR, path, url, &headers);
 
                     error!("{}", e);
                     build_resp_with_fallback(StatusCode::INTERNAL_SERVER_ERROR)
@@ -171,15 +171,23 @@ async fn handle(request: Request<Body>, strategy: Strategy<'_>) -> Response<Body
             build_resp_with_fallback(StatusCode::INTERNAL_SERVER_ERROR)
         }
         Loaded::Special(status_code) => {
-            route_log(&status_code, path, url);
+            route_log(&status_code, path, url, &headers);
 
             build_resp_with_fallback(status_code)
         }
     }
 }
 
-fn route_log(status_code: &StatusCode, path: &Uri, url: &str) {
-    info!("{} \"{}\" => \"{}\"", status_code, path, url);
+fn route_log(status_code: &StatusCode, path: &Uri, url: &str, headers: &HeaderMap) {
+    let user_agent = headers
+        .get(header::USER_AGENT)
+        .map(|v| v.to_str().unwrap_or_default())
+        .unwrap_or_default();
+
+    info!(
+        "{} \"{}\" => \"{}\" \"{}\"",
+        status_code, path, url, user_agent
+    );
 }
 
 async fn handle_page<'a>(html: &str, strategy: &'a Strategy<'_>) -> anyhow::Result<String> {
