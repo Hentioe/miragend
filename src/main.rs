@@ -13,6 +13,7 @@ use markup5ever_rcdom::{Handle, Node, NodeData::Element};
 use obfuscation::Obfuscator;
 use std::path::Path;
 use std::rc::Rc;
+use std::str::Chars;
 use tokio::signal;
 
 mod cli;
@@ -247,50 +248,36 @@ fn obfuscate_doc_text(handle: Handle, mut ignore_remaining: usize) {
     for (child, after_content) in text_nodes {
         if let markup5ever_rcdom::NodeData::Text { ref contents } = child.data {
             contents.replace_with(|text| {
-                if !after_content || ignore_remaining == 0 || text.trim().is_empty() {
+                if !after_content || ignore_remaining == 0 {
                     text.obfuscated()
                 } else {
-                    // TODO: 改进空格问题，逐字符替换自动更新余量。
-                    let (head_space, content, tail_space) = split_node_text(text);
-                    let chars_count = text.chars().count() - count_whitespace(text);
-                    if ignore_remaining > chars_count {
-                        // Check if the remaining is greater than the number of characters
-                        ignore_remaining -= chars_count;
-                        text.clone()
-                    } else if ignore_remaining > 0 {
-                        // If there is still a surplus, only replace the surplus part
-                        ignore_remaining = 0;
-                        let (ignore, remain) = content.split_at(ignore_remaining);
-                        format!(
-                            "{}{}{}{}",
-                            head_space,
-                            ignore,
-                            remain.obfuscated(),
-                            tail_space
-                        )
-                        .into()
-                    } else {
-                        text.obfuscated()
-                    }
+                    let (content, remaining) =
+                        obfuscated_with_remaining(text.chars(), ignore_remaining);
+                    ignore_remaining = remaining;
+
+                    content.into()
                 }
             });
         }
     }
 }
 
-fn count_whitespace(s: &str) -> usize {
-    s.chars().filter(|c| c.is_whitespace()).count()
-}
+fn obfuscated_with_remaining(chars: Chars<'_>, mut ignore_remaining: usize) -> (String, usize) {
+    let mut parts = vec![];
+    for c in chars {
+        // 如果不是空白字符
+        let c = if ignore_remaining > 0 && !c.is_whitespace() {
+            ignore_remaining -= 1;
 
-fn split_node_text(input: &str) -> (String, String, String) {
-    let head_space_len = input.len() - input.trim_start().len();
-    let tail_space_len = input.len() - input.trim_end().len();
+            c
+        } else {
+            c.obfuscated()
+        };
 
-    let head_space = input[..head_space_len].to_string();
-    let content = input[head_space_len..input.len() - tail_space_len].to_string();
-    let tail_space = input[input.len() - tail_space_len..].to_string();
+        parts.push(c);
+    }
 
-    (head_space, content, tail_space)
+    (parts.into_iter().collect(), ignore_remaining)
 }
 
 fn collect_obfuscation_nodes(

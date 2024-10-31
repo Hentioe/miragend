@@ -103,3 +103,15 @@ impl Obfuscator for str {
         self.chars().map(random_char).collect()
     }
 }
+
+impl Obfuscator for char {
+    type Output = char;
+
+    fn obfuscate(&mut self) {
+        todo!()
+    }
+
+    fn obfuscated(&self) -> char {
+        random_char(*self)
+    }
+}
