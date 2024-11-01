@@ -1,16 +1,19 @@
 use anyhow::Context;
 use axum::body::Body;
+use axum::extract::ConnectInfo;
 use axum::{http::Request, routing::get, Router};
 use clap::Parser;
 use fetching::Loaded;
 use headers::AppendHeaders;
 use html5ever::LocalName;
 use html_ops::{DOMBuilder, DOMOps, NodeOps};
-use http::{header, HeaderMap, Response, StatusCode, Uri};
+use http::{Response, StatusCode};
 use log::{error, info, warn};
+use logging::RoutedInfo;
 use markup5ever::local_name;
 use markup5ever_rcdom::{Handle, Node, NodeData::Element};
 use obfuscation::Obfuscator;
+use std::net::SocketAddr;
 use std::path::Path;
 use std::rc::Rc;
 use std::str::Chars;
@@ -20,6 +23,7 @@ mod cli;
 mod fetching;
 mod headers;
 mod html_ops;
+mod logging;
 mod obfuscation;
 mod request;
 mod special_response;
@@ -61,10 +65,13 @@ async fn main() -> anyhow::Result<()> {
 
     info!("listening on: http://{}", bind);
 
-    axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal())
-        .await
-        .context("failed to run server")?;
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .with_graceful_shutdown(shutdown_signal())
+    .await
+    .context("failed to run server")?;
 
     Ok(())
 }
@@ -75,23 +82,26 @@ fn validate_config() -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn handler(request: Request<Body>) -> Response<Body> {
+async fn handler(
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    request: Request<Body>,
+) -> Response<Body> {
     match vars::strategy() {
-        "patch" => patch_handler(request).await,
-        "obfuscation" | "obfus" => obfus_handler(request).await,
+        "patch" => patch_handler(addr, request).await,
+        "obfuscation" | "obfus" => obfus_handler(addr, request).await,
         s => {
             error!("invalid strategy: {}, fallback to obfuscation", s);
 
-            obfus_handler(request).await
+            obfus_handler(addr, request).await
         }
     }
 }
 
-async fn obfus_handler(request: Request<Body>) -> Response<Body> {
-    handle(request, Strategy::Obfuscation).await
+async fn obfus_handler(conn_addr: SocketAddr, request: Request<Body>) -> Response<Body> {
+    handle(conn_addr, request, Strategy::Obfuscation).await
 }
 
-async fn patch_handler(request: Request<Body>) -> Response<Body> {
+async fn patch_handler(conn_addr: SocketAddr, request: Request<Body>) -> Response<Body> {
     let patch_html = load_patch_html(vars::patch_content_file());
     let config = PatchConfig {
         target: vars::patch_target().to_owned(),
@@ -100,16 +110,19 @@ async fn patch_handler(request: Request<Body>) -> Response<Body> {
         remove_meta_tags: vars::patch_remove_meta_tags(),
     };
 
-    handle(request, Strategy::Patch(config)).await
+    handle(conn_addr, request, Strategy::Patch(config)).await
 }
 
-async fn handle(request: Request<Body>, strategy: Strategy<'_>) -> Response<Body> {
+async fn handle(
+    conn_addr: SocketAddr,
+    request: Request<Body>,
+    strategy: Strategy<'_>,
+) -> Response<Body> {
     use fetching::ContentType::*;
     use special_response::build_resp_with_fallback;
 
     let path = request.uri();
     let url = &format!("{}{}", vars::upstream_base_url(), path);
-    let headers = headers::build_from_request(request.headers());
     let build_resp = |resp: &fetching::Response, body: String| {
         Response::builder()
             .status(resp.status)
@@ -118,26 +131,39 @@ async fn handle(request: Request<Body>, strategy: Strategy<'_>) -> Response<Body
             .context("failed to create response")
     };
 
-    match fetching::load(url, headers.clone()).await {
+    let req_headers = request.headers();
+    let internal_err_log = move || {
+        RoutedInfo::new(
+            &StatusCode::INTERNAL_SERVER_ERROR,
+            path,
+            url,
+            req_headers,
+            conn_addr,
+        )
+        .print_log();
+    };
+
+    match fetching::load(url, headers::build_from_request(request.headers())).await {
         Loaded::Forward(resp) if resp.content_type == Html => {
             match handle_page(&resp.body, &strategy).await {
                 Ok(html) => match build_resp(&resp, html) {
                     Ok(resp) => {
-                        route_log(&resp.status(), path, url, &headers);
+                        RoutedInfo::new(&resp.status(), path, url, request.headers(), conn_addr)
+                            .print_log();
 
                         resp
                     }
                     Err(e) => {
-                        route_log(&StatusCode::INTERNAL_SERVER_ERROR, path, url, &headers);
+                        internal_err_log();
 
                         error!("{}", e);
                         build_resp_with_fallback(StatusCode::INTERNAL_SERVER_ERROR)
                     }
                 },
                 Err(e) => {
-                    route_log(&StatusCode::INTERNAL_SERVER_ERROR, path, url, &headers);
-                    error!("{}", e);
+                    internal_err_log();
 
+                    error!("{}", e);
                     build_resp_with_fallback(StatusCode::INTERNAL_SERVER_ERROR)
                 }
             }
@@ -146,19 +172,20 @@ async fn handle(request: Request<Body>, strategy: Strategy<'_>) -> Response<Body
             match handle_json(&resp.body, &strategy) {
                 Ok(json) => match build_resp(&resp, json) {
                     Ok(resp) => {
-                        route_log(&resp.status(), path, url, &headers);
+                        RoutedInfo::new(&resp.status(), path, url, request.headers(), conn_addr)
+                            .print_log();
 
                         resp
                     }
                     Err(e) => {
-                        route_log(&StatusCode::INTERNAL_SERVER_ERROR, path, url, &headers);
+                        internal_err_log();
 
                         error!("{}", e);
                         build_resp_with_fallback(StatusCode::INTERNAL_SERVER_ERROR)
                     }
                 },
                 Err(e) => {
-                    route_log(&StatusCode::INTERNAL_SERVER_ERROR, path, url, &headers);
+                    internal_err_log();
 
                     error!("{}", e);
                     build_resp_with_fallback(StatusCode::INTERNAL_SERVER_ERROR)
@@ -171,23 +198,11 @@ async fn handle(request: Request<Body>, strategy: Strategy<'_>) -> Response<Body
             build_resp_with_fallback(StatusCode::INTERNAL_SERVER_ERROR)
         }
         Loaded::Special(status_code) => {
-            route_log(&status_code, path, url, &headers);
+            RoutedInfo::new(&status_code, path, url, request.headers(), conn_addr).print_log();
 
             build_resp_with_fallback(status_code)
         }
     }
-}
-
-fn route_log(status_code: &StatusCode, path: &Uri, url: &str, headers: &HeaderMap) {
-    let user_agent = headers
-        .get(header::USER_AGENT)
-        .map(|v| v.to_str().unwrap_or_default())
-        .unwrap_or_default();
-
-    info!(
-        "{} \"{}\" => \"{}\" \"{}\"",
-        status_code, path, url, user_agent
-    );
 }
 
 async fn handle_page<'a>(html: &str, strategy: &'a Strategy<'_>) -> anyhow::Result<String> {
