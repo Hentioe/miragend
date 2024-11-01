@@ -51,7 +51,7 @@ struct PatchConfig<'a> {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    env_logger::init();
+    logging::init_logger();
     if dotenvy::dotenv().is_ok() {
         info!("loaded .env file");
     }

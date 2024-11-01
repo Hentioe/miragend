@@ -9,6 +9,6 @@ RUN set -xe \
 # Use Alpine as the runner
 FROM alpine:3.20 AS runner
 COPY --from=builder /src/target/release/miragend /usr/local/bin/miragend
-ENV RUST_LOG=info
+ENV MIRAGEND_LOG=info
 EXPOSE 8080
 ENTRYPOINT [ "miragend" ]

@@ -1,6 +1,36 @@
+use chrono::Local;
+use env_logger::Builder;
 use http::{header, HeaderMap, StatusCode, Uri};
-use log::info;
+use log::{info, Level, LevelFilter};
+use std::io::Write;
 use std::net::SocketAddr;
+
+pub fn init_logger() {
+    Builder::new()
+        .format(|buf, record| {
+            writeln!(
+                buf,
+                "[{} {}\x1b[0m] {}",
+                Local::now().format("%Y-%m-%dT%H:%M:%S"),
+                colorized_level(record.level()),
+                record.args()
+            )
+        })
+        // todo: 级别由 MIRAGEND_LOG 变量决定
+        .filter(None, LevelFilter::Info)
+        .init();
+}
+
+fn colorized_level(level: Level) -> &'static str {
+    // Colors follow env_logger by default: https://github.com/rust-cli/env_logger/blob/73bb4188026f1ad5e6409c4148d37d572cc921bd/src/fmt/mod.rs#L168
+    match level {
+        Level::Error => "\x1b[31m\x1b[1mERROR",
+        Level::Warn => "\x1b[33mWARN",
+        Level::Info => "\x1b[32mINFO",
+        Level::Debug => "\x1b[34mDEBUG",
+        Level::Trace => "\x1b[36mTRACE",
+    }
+}
 
 pub struct RoutedInfo<'a> {
     pub status_code: &'a StatusCode,

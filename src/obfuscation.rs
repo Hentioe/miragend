@@ -68,7 +68,7 @@ impl ObfuscatorConfig {
         for record in records.into_iter() {
             match CharactersMapper::try_from(record) {
                 Ok(mapper) => {
-                    info!("loaded character mapping: {}", &mapper.comment);
+                    info!("loaded characters mapping: {}", &mapper.comment);
                     mappers.push(mapper);
                 }
                 Err(e) => {
