@@ -1,3 +1,4 @@
+use crate::vars;
 use chrono::Local;
 use env_logger::Builder;
 use http::{header, HeaderMap, StatusCode, Uri};
@@ -35,16 +36,15 @@ fn colorized_level(level: Level) -> &'static str {
 pub struct RoutedInfo<'a> {
     pub status_code: &'a StatusCode,
     pub path: &'a Uri,
-    pub url: &'a str,
     pub user_agent: &'a str,
     pub client_ip: String,
+    pub referer: &'a str,
 }
 
 impl<'a> RoutedInfo<'a> {
     pub fn new(
         status_code: &'a StatusCode,
         path: &'a Uri,
-        url: &'a str,
         req_headers: &'a HeaderMap,
         conn_addr: SocketAddr,
     ) -> Self {
@@ -68,20 +68,30 @@ impl<'a> RoutedInfo<'a> {
         } else {
             conn_addr.ip().to_string()
         };
+        let referer = if let Some(referer) = req_headers.get(header::REFERER) {
+            referer.to_str().unwrap_or("-")
+        } else {
+            "-"
+        };
 
         RoutedInfo {
             status_code,
             path,
-            url,
             user_agent,
             client_ip,
+            referer,
         }
     }
 
     pub fn print_log(&self) {
         info!(
-            "{} \"{}\" => \"{}\" [Client {}] \"{}\"",
-            self.status_code, self.path, self.url, self.client_ip, self.user_agent
+            "{} \"{}\" [Sent-to {}] [Client {}] \"{}\" \"{}\"",
+            self.status_code,
+            self.path,
+            vars::upstream_base_url(),
+            self.client_ip,
+            self.user_agent,
+            self.referer
         );
     }
 }

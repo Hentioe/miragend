@@ -136,7 +136,6 @@ async fn handle(
         RoutedInfo::new(
             &StatusCode::INTERNAL_SERVER_ERROR,
             path,
-            url,
             req_headers,
             conn_addr,
         )
@@ -148,7 +147,7 @@ async fn handle(
             match handle_page(&resp.body, &strategy).await {
                 Ok(html) => match build_resp(&resp, html) {
                     Ok(resp) => {
-                        RoutedInfo::new(&resp.status(), path, url, request.headers(), conn_addr)
+                        RoutedInfo::new(&resp.status(), path, request.headers(), conn_addr)
                             .print_log();
 
                         resp
@@ -172,7 +171,7 @@ async fn handle(
             match handle_json(&resp.body, &strategy) {
                 Ok(json) => match build_resp(&resp, json) {
                     Ok(resp) => {
-                        RoutedInfo::new(&resp.status(), path, url, request.headers(), conn_addr)
+                        RoutedInfo::new(&resp.status(), path, request.headers(), conn_addr)
                             .print_log();
 
                         resp
@@ -198,7 +197,7 @@ async fn handle(
             build_resp_with_fallback(StatusCode::INTERNAL_SERVER_ERROR)
         }
         Loaded::Special(status_code) => {
-            RoutedInfo::new(&status_code, path, url, request.headers(), conn_addr).print_log();
+            RoutedInfo::new(&status_code, path, request.headers(), conn_addr).print_log();
 
             build_resp_with_fallback(status_code)
         }
