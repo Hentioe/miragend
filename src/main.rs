@@ -211,20 +211,20 @@ async fn handle_page<'a>(html: &str, strategy: &'a Strategy<'_>) -> anyhow::Resu
         Strategy::Patch(config) => {
             let fragment_dom = config.content.build_fragment();
             replace_children(
-                dom.document.clone(),
+                Rc::clone(&dom.document),
                 &config.target,
                 html_ops::extract_contents(&fragment_dom.document),
             );
             for node in config.remove_nodes {
-                remove_children(dom.document.clone(), node);
+                remove_children(Rc::clone(&dom.document), node);
             }
-            remove_doc_metas(dom.document.clone(), config.remove_meta_tags);
+            remove_doc_metas(Rc::clone(&dom.document), config.remove_meta_tags);
 
             Some(fragment_dom)
         }
         Strategy::Obfuscation => {
-            obfuscate_doc_text(dom.document.clone(), vars::obfuscation_ignore_len());
-            obfuscate_doc_metas(dom.document.clone(), vars::obfuscation_meta_tags());
+            obfuscate_doc_text(Rc::clone(&dom.document), vars::obfuscation_ignore_len());
+            obfuscate_doc_metas(Rc::clone(&dom.document), vars::obfuscation_meta_tags());
 
             None
         }
@@ -232,7 +232,7 @@ async fn handle_page<'a>(html: &str, strategy: &'a Strategy<'_>) -> anyhow::Resu
 
     let inject_script = vars::inject_online_script();
     if !inject_script.is_empty() {
-        inject_online_script(dom.document.clone(), inject_script);
+        inject_online_script(Rc::clone(&dom.document), inject_script);
     }
 
     html_ops::serialize_to_html(dom).context("failed to serialize document")
@@ -320,7 +320,7 @@ fn collect_obfuscation_nodes(
                     // No obfuscation for title
                     title_found = true;
                 } else {
-                    text_nodes.push((child.clone(), after_content));
+                    text_nodes.push((Rc::clone(child), after_content));
                 }
             }
             markup5ever_rcdom::NodeData::Element { ref name, .. } => {

@@ -48,12 +48,12 @@ impl DOMOps for Handle {
             if let Element { ref attrs, .. } = &child.data {
                 for attr in attrs.borrow().iter() {
                     if attr.name.local == local_name!("id") && attr.value == id.into() {
-                        return Some(child.clone());
+                        return Some(Rc::clone(child));
                     }
                 }
             }
 
-            if let Some(node) = Self::get_element_by_id(child.clone(), id) {
+            if let Some(node) = Self::get_element_by_id(Rc::clone(child), id) {
                 return Some(node);
             }
         }
@@ -66,10 +66,10 @@ impl DOMOps for Handle {
         for child in children.iter() {
             if let Element { name, .. } = &child.data {
                 if name.local == local_name!("head") {
-                    return Some(child.clone());
+                    return Some(Rc::clone(child));
                 }
 
-                if let Some(node) = Self::get_head(child.clone()) {
+                if let Some(node) = Self::get_head(Rc::clone(child)) {
                     return Some(node);
                 }
             }
@@ -84,10 +84,10 @@ impl DOMOps for Handle {
         for child in children.iter() {
             if let Element { name, .. } = &child.data {
                 if name.local == local_name!("meta") {
-                    meta_tags.push(child.clone());
+                    meta_tags.push(Rc::clone(child));
                 }
 
-                meta_tags.append(&mut Self::find_meta_tags(child.clone()));
+                meta_tags.append(&mut Self::find_meta_tags(Rc::clone(child)));
             }
         }
 
@@ -160,7 +160,7 @@ pub fn build_newline() -> Rc<Node> {
 
 pub fn serialize_to_html(dom: RcDom) -> anyhow::Result<String> {
     let mut buf = Vec::new();
-    let document: SerializableHandle = dom.document.clone().into();
+    let document: SerializableHandle = Rc::clone(&dom.document).into();
     serialize(&mut buf, &document, Default::default()).context("failed to serialize HTML")?;
 
     String::from_utf8(buf).context("failed to convert HTML to string")
@@ -186,7 +186,7 @@ mod dom_builder_tests {
             </html>"#;
 
         let dom = html.build_document().unwrap();
-        assert!(matches!(dom.document.clone().data, Document { .. }));
+        assert!(matches!(Rc::clone(&dom.document).data, Document { .. }));
     }
 
     #[test]
@@ -197,7 +197,7 @@ mod dom_builder_tests {
             </div>"#;
 
         let dom = html.build_fragment();
-        assert!(matches!(dom.document.clone().data, Document { .. }));
+        assert!(matches!(Rc::clone(&dom.document).data, Document { .. }));
     }
 }
 
@@ -223,7 +223,7 @@ mod dom_opts_tests {
             </html>"#;
 
         let dom = html.build_document().unwrap();
-        let result = dom.document.clone().get_element_by_id("hello");
+        let result = Rc::clone(&dom.document).get_element_by_id("hello");
         assert!(result.is_some());
         assert!(matches!(
             result.unwrap().data,
@@ -250,7 +250,7 @@ mod dom_opts_tests {
             </html>"#;
 
         let dom = html.build_document().unwrap();
-        let result = dom.document.clone().get_head();
+        let result = Rc::clone(&dom.document).get_head();
         assert!(result.is_some());
         assert!(matches!(
             result.clone().unwrap().data,
@@ -288,7 +288,7 @@ mod dom_opts_tests {
             </html>"#;
 
         let dom = html.build_document().unwrap();
-        let meta_tags = dom.document.clone().find_meta_tags();
+        let meta_tags = Rc::clone(&dom.document).find_meta_tags();
         assert!(meta_tags.len() == 8);
     }
 }
@@ -312,7 +312,7 @@ mod node_ops_tests {
             </html>"#;
 
         let dom = html.build_document().unwrap();
-        let div = dom.document.clone().get_element_by_id("hello").unwrap();
+        let div = Rc::clone(&dom.document).get_element_by_id("hello").unwrap();
         let id = div.get_attribute(&local_name!("id"));
         assert!(id.is_some());
         assert_eq!(id.unwrap(), "hello".into());
@@ -333,7 +333,7 @@ mod node_ops_tests {
             </html>"#;
 
         let dom = html.build_document().unwrap();
-        let mut div = dom.document.clone().get_element_by_id("hello").unwrap();
+        let mut div = Rc::clone(&dom.document).get_element_by_id("hello").unwrap();
         div.set_attribute(&local_name!("id"), "world".into());
         let id = div.get_attribute(&local_name!("id"));
         assert!(id.is_some());
@@ -379,7 +379,7 @@ fn test_serialize_to_html() {
         "<html><head><title>Test</title></head><body><div><p id=\"hello\">Hello, World!</p></div></body></html>";
 
     let dom = html.build_document().unwrap();
-    if let Some(hello_node) = dom.document.clone().get_element_by_id("hello") {
+    if let Some(hello_node) = Rc::clone(&dom.document).get_element_by_id("hello") {
         hello_node
             .children
             .replace(vec![Node::new(markup5ever_rcdom::NodeData::Text {
